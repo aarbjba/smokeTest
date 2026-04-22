@@ -33,9 +33,39 @@ let started = false;
 
 interface NextRow {
   id: number;
+  title: string;
+  description: string | null;
+  source_url: string | null;
   queue_prompt: string | null;
   queue_attachment_ids: string | null;
   working_directory: string | null;
+}
+
+/**
+ * Mirror of the frontend's `buildDefaultPrompt` in ClaudeAgent.vue so queue
+ * runs get the same "first message" a manual click would produce. When the
+ * user doesn't provide an explicit queue prompt we feed this to the agent,
+ * matching the behaviour of pressing "Run Claude" on the detail page.
+ */
+function buildDefaultPrompt(
+  title: string,
+  description: string | null,
+  sourceUrl: string | null,
+): string {
+  const parts: string[] = [];
+  parts.push(`Task: ${title}`);
+  if (description && description.trim()) {
+    parts.push('');
+    parts.push('Description:');
+    parts.push(description.trim());
+  }
+  if (sourceUrl) {
+    parts.push('');
+    parts.push(`Source: ${sourceUrl}`);
+  }
+  parts.push('');
+  parts.push('Please help me complete this.');
+  return parts.join('\n');
 }
 
 function getDefaultWorkingDirectory(): string {
@@ -82,7 +112,7 @@ function tick(): void {
   if (runningTodoId !== null) return; // overlap guard
 
   const next = db.prepare(
-    `SELECT id, queue_prompt, queue_attachment_ids, working_directory
+    `SELECT id, title, description, source_url, queue_prompt, queue_attachment_ids, working_directory
        FROM todos
       WHERE queue_position IS NOT NULL
         AND deleted_at IS NULL
@@ -125,13 +155,13 @@ function tick(): void {
     }
   }
 
-  // Empty prompt is fine — claude-sessions wraps it in the preprompt template
-  // either way, and the template's {{user_prompt}} slot accepts an empty string.
-  // We supply a small placeholder so the turn header in the output pane shows
-  // something meaningful.
+  // When the user provided an explicit queue prompt, use that. Otherwise fall
+  // back to the SAME default prompt that the ClaudeAgent panel pre-fills when
+  // you click "Run Claude" manually — title + description + source_url — so
+  // queued runs behave identically to the interactive path.
   const userPrompt = (next.queue_prompt && next.queue_prompt.trim())
     ? next.queue_prompt
-    : '(aus Warteschlange gestartet — keine zusätzliche Anweisung)';
+    : buildDefaultPrompt(next.title, next.description, next.source_url);
 
   runningTodoId = next.id;
 

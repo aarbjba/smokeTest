@@ -7,6 +7,7 @@ import { beginCardDrag, endCardDrag, draggingCardId, isCardDragging } from '../s
 import { useTodosStore } from '../stores/todos';
 import { useSelectionStore } from '../stores/selection';
 import { useQueueStore } from '../stores/queue';
+import { useAgentSessionsStore } from '../stores/agentSessions';
 import { computed } from 'vue';
 
 const props = defineProps<{ todo: Todo; orderedIds?: number[] }>();
@@ -18,8 +19,14 @@ const router = useRouter();
 const todos = useTodosStore();
 const selection = useSelectionStore();
 const queueStore = useQueueStore();
+const agentSessions = useAgentSessionsStore();
 const toggling = ref(false);
 const queueBusy = ref(false);
+
+// Drives the iridescent "being worked on right now" border. True only while
+// a Claude session is actively running for this todo (not for cards manually
+// dragged to Unter Hammer without an agent).
+const isAgentWorking = computed(() => agentSessions.isRunning(props.todo.id));
 
 // Queue status for this card. Only meaningful for status='todo' cards — that's
 // the only column where the enqueue button is shown.
@@ -184,70 +191,48 @@ function sourceBadge(): string {
   outline-offset: -2px;
 }
 
-/* "Currently being worked on" indicator — cards in the Unter-Hammer column
-   (status=in_progress) get a slowly-shifting iridescent rainbow border that
-   "waves" around the card. Uses mask-composite to cut out the interior so only
-   the border shows, and animates both the gradient position (hue shift) and
-   a subtle pulsing box-shadow for presence.
+/* "Agent is actively working on this right now" indicator.
+   Gated on `.agent-working`, added by the template whenever the agentSessions
+   store reports a running Claude session for this todo.
 
-   The ::before sits just outside the card's normal border via inset: -2px and
-   matches its border-radius (inherit falls back to common card radius).
-
-   Respects prefers-reduced-motion to not annoy motion-sensitive users. */
-.todo-card.status-in_progress {
+   Intentionally subtle: a thin animated rainbow line along the TOP edge of
+   the card, plus a very soft pulsing shadow. Nothing that fights the card
+   for attention — just a clear signal the agent is live. */
+.todo-card.agent-working {
   position: relative;
-  isolation: isolate;
+  animation: agent-working-pulse 2.4s ease-in-out infinite;
 }
-.todo-card.status-in_progress::before {
+.todo-card.agent-working::after {
   content: '';
   position: absolute;
-  inset: -2px;
-  border-radius: inherit;
-  padding: 2px;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
   background: linear-gradient(
-    110deg,
-    #ff2e88 0%,
-    #ff8c00 15%,
-    #ffd700 30%,
-    #33ff99 45%,
-    #00d4ff 60%,
-    #7a5cff 75%,
-    #ff2e88 100%
+    90deg,
+    #ff2e88, #ff8c00, #ffd700, #33ff99, #00d4ff, #7a5cff, #ff2e88
   );
   background-size: 300% 100%;
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-          mask-composite: exclude;
-  animation:
-    iridescent-wave 4s linear infinite,
-    iridescent-pulse 2.4s ease-in-out infinite;
+  animation: iridescent-wave 3s linear infinite;
   pointer-events: none;
-  z-index: 0;
-  filter: saturate(1.15);
-}
-.todo-card.status-in_progress > * {
-  position: relative;
-  z-index: 1;
 }
 
 @keyframes iridescent-wave {
   from { background-position: 0% 50%; }
   to   { background-position: 300% 50%; }
 }
-@keyframes iridescent-pulse {
-  0%, 100% { opacity: 0.85; filter: saturate(1.1) brightness(1); }
-  50%      { opacity: 1;    filter: saturate(1.4) brightness(1.15); }
+@keyframes agent-working-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, #7a5cff 0%, transparent); }
+  50%      { box-shadow: 0 0 10px 1px color-mix(in srgb, #7a5cff 28%, transparent); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .todo-card.status-in_progress::before {
+  .todo-card.agent-working,
+  .todo-card.agent-working::after {
     animation: none;
-    background-position: 0% 50%;
   }
 }
 
@@ -331,6 +316,7 @@ function sourceBadge(): string {
       dropPos === 'after'  ? 'drop-indicator-bottom' : '',
       selection.has(todo.id) ? 'selected' : '',
       selection.hasAny ? 'selection-active' : '',
+      isAgentWorking ? 'agent-working' : '',
     ]"
     draggable="true"
     @dragstart="onDragStart"

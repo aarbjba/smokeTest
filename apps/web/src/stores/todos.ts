@@ -4,6 +4,34 @@ import type { Todo, TodoStatus, SourceFilter } from '../types';
 import { useUndoStore } from './undo';
 
 const SOURCE_FILTER_KEY = 'werkbank:source-filter';
+const TAG_FILTER_KEY = 'werkbank:tag-filter';
+const REPO_FILTER_KEY = 'werkbank:repo-filter';
+
+function loadJsonArray(key: string): string[] {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+// Repo = GitHub `owner/name` (part before `#` in source_ref) or Jira project key
+// (part before `-` in source_ref). Local todos have no repo concept.
+export function repoOfTodo(t: Todo): string | null {
+  if (!t.source_ref) return null;
+  if (t.source === 'github') {
+    const hash = t.source_ref.indexOf('#');
+    return hash > 0 ? t.source_ref.slice(0, hash) : null;
+  }
+  if (t.source === 'jira') {
+    const dash = t.source_ref.indexOf('-');
+    return dash > 0 ? t.source_ref.slice(0, dash) : null;
+  }
+  return null;
+}
 
 export const useTodosStore = defineStore('todos', {
   state: () => ({
@@ -12,16 +40,30 @@ export const useTodosStore = defineStore('todos', {
     error: null as string | null,
     search: '',
     sourceFilter: (localStorage.getItem(SOURCE_FILTER_KEY) as SourceFilter | null) ?? 'all' as SourceFilter,
+    activeTags: loadJsonArray(TAG_FILTER_KEY),
+    activeRepos: loadJsonArray(REPO_FILTER_KEY),
     lastFetchAt: null as number | null,
   }),
   getters: {
-    // Filter chain: status → source → search. Server already orders by (status, position, ...).
-    byStatus: (state) => (status: TodoStatus) => {
-      const q = state.search.toLowerCase();
-      return state.items
-        .filter((t) => t.status === status)
-        .filter((t) => state.sourceFilter === 'all' || t.source === state.sourceFilter)
-        .filter((t) => !q || (t.title + ' ' + t.description).toLowerCase().includes(q));
+    // Filter chain: status → source → tags → repos → search. AND across dimensions,
+    // OR within a dimension. Server already orders by (status, position, ...).
+    byStatus(state) {
+      return (status: TodoStatus) => {
+        const q = state.search.toLowerCase();
+        const tagSet = new Set(state.activeTags);
+        const repoSet = new Set(state.activeRepos);
+        return state.items.filter((t) => {
+          if (t.status !== status) return false;
+          if (state.sourceFilter !== 'all' && t.source !== state.sourceFilter) return false;
+          if (tagSet.size > 0 && !t.tags.some((tag) => tagSet.has(tag))) return false;
+          if (repoSet.size > 0) {
+            const repo = repoOfTodo(t);
+            if (!repo || !repoSet.has(repo)) return false;
+          }
+          if (q && !(t.title + ' ' + t.description).toLowerCase().includes(q)) return false;
+          return true;
+        });
+      };
     },
     byId: (state) => (id: number) => state.items.find((t) => t.id === id),
     counts: (state) => {
@@ -29,11 +71,70 @@ export const useTodosStore = defineStore('todos', {
       for (const t of state.items) bySource[t.source]++;
       return bySource;
     },
+    // Unique tags across all todos with occurrence counts. Used by the tag picker.
+    // Counts are over the full item set (not contextual) — keeps the picker stable
+    // while the user toggles filters on/off.
+    tagsWithCounts(state): { value: string; count: number }[] {
+      const counts = new Map<string, number>();
+      for (const t of state.items) {
+        for (const tag of t.tags) {
+          counts.set(tag, (counts.get(tag) ?? 0) + 1);
+        }
+      }
+      return Array.from(counts.entries())
+        .map(([value, count]) => ({ value, count }))
+        .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+    },
+    reposWithCounts(state): { value: string; count: number }[] {
+      const counts = new Map<string, number>();
+      for (const t of state.items) {
+        const repo = repoOfTodo(t);
+        if (!repo) continue;
+        counts.set(repo, (counts.get(repo) ?? 0) + 1);
+      }
+      return Array.from(counts.entries())
+        .map(([value, count]) => ({ value, count }))
+        .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+    },
+    activeFilterCount(state): number {
+      let n = 0;
+      if (state.sourceFilter !== 'all') n++;
+      n += state.activeTags.length;
+      n += state.activeRepos.length;
+      if (state.search && state.search.trim() !== '') n++;
+      return n;
+    },
   },
   actions: {
     setSourceFilter(filter: SourceFilter) {
       this.sourceFilter = filter;
       localStorage.setItem(SOURCE_FILTER_KEY, filter);
+    },
+    setActiveTags(tags: string[]) {
+      this.activeTags = [...tags];
+      localStorage.setItem(TAG_FILTER_KEY, JSON.stringify(this.activeTags));
+    },
+    setActiveRepos(repos: string[]) {
+      this.activeRepos = [...repos];
+      localStorage.setItem(REPO_FILTER_KEY, JSON.stringify(this.activeRepos));
+    },
+    toggleTag(tag: string) {
+      const idx = this.activeTags.indexOf(tag);
+      if (idx >= 0) this.activeTags.splice(idx, 1);
+      else this.activeTags.push(tag);
+      localStorage.setItem(TAG_FILTER_KEY, JSON.stringify(this.activeTags));
+    },
+    toggleRepo(repo: string) {
+      const idx = this.activeRepos.indexOf(repo);
+      if (idx >= 0) this.activeRepos.splice(idx, 1);
+      else this.activeRepos.push(repo);
+      localStorage.setItem(REPO_FILTER_KEY, JSON.stringify(this.activeRepos));
+    },
+    clearAllFilters() {
+      this.setSourceFilter('all');
+      this.setActiveTags([]);
+      this.setActiveRepos([]);
+      this.search = '';
     },
     async fetchAll() {
       this.loading = true;

@@ -174,7 +174,10 @@ function persistSessionId(todoId: number, sessionId: string | null): void {
 // ─── Preprompt rendering ────────────────────────────────────────────────────
 // Default template. User-editable via settings key 'agent.preprompt'.
 // Placeholders: {{todo_id}}, {{todo_title}}, {{todo_description}}, {{todo_status}},
-//               {{subtasks}}, {{user_prompt}}
+//               {{subtasks}}, {{analyses}}, {{user_prompt}}
+//
+// {{analyses}} expands to the full "## Bisherige Analysen" block (incl. heading)
+// when the caller opted to include them, or to an empty string otherwise.
 const DEFAULT_PREPROMPT = `Du arbeitest an einer Aufgabe aus der Werkbank. Nutze die MCP-Tools "werkbank" um den Fortschritt live zu tracken.
 
 ## Aktuelle Aufgabe
@@ -187,7 +190,7 @@ Beschreibung:
 
 ## Bestehende Subtasks
 {{subtasks}}
-
+{{analyses}}
 ## Arbeitsweise
 1. Prüfe zuerst die oben aufgeführten bestehenden Subtasks. Entscheide, ob sie die Aufgabe vollständig abdecken. Sind sie ausreichend, arbeite sie direkt ab. Fehlen Schritte oder existieren noch keine, ergänze sie via mcp__werkbank__add_subtask, bevor du mit der Umsetzung beginnst.
 2. Arbeite die Subtasks ab und hake jeden Schritt ab, sobald er erledigt ist (mcp__werkbank__update_subtask mit done=true).
@@ -262,7 +265,13 @@ interface SubtaskLite {
   suggested: 0 | 1;
 }
 
-function renderPreprompt(todoId: number, userPrompt: string, mode: AgentMode): string {
+interface AnalysisLite {
+  id: number;
+  content: string;
+  created_at: string;
+}
+
+function renderPreprompt(todoId: number, userPrompt: string, mode: AgentMode, includeAnalyses: boolean): string {
   const template = getPreprompt(mode);
   const todo = db.prepare(
     `SELECT id, title, description, status FROM todos WHERE id = ?`,
@@ -284,12 +293,27 @@ function renderPreprompt(todoId: number, userPrompt: string, mode: AgentMode): s
         return `- [${mark}] (#${s.id})${tag} ${s.title}`;
       }).join('\n');
 
+  // Previously saved analyses from analyse-mode runs, injected only when the
+  // caller opted in (Analyse-einbeziehen checkbox in the agent panel). Newest
+  // first so the most recent thinking leads.
+  let analysesBlock = '';
+  if (includeAnalyses) {
+    const analyses = db.prepare(
+      `SELECT id, content, created_at FROM analyses WHERE todo_id = ? ORDER BY created_at DESC, id DESC`,
+    ).all(todoId) as AnalysisLite[];
+    if (analyses.length > 0) {
+      const parts = analyses.map((a) => `### Analyse vom ${a.created_at}\n${a.content.trim()}`);
+      analysesBlock = `\n## Bisherige Analysen\n${parts.join('\n\n')}\n`;
+    }
+  }
+
   return template
     .replace(/\{\{todo_id\}\}/g, String(todo.id))
     .replace(/\{\{todo_title\}\}/g, todo.title)
     .replace(/\{\{todo_description\}\}/g, todo.description || '(leer)')
     .replace(/\{\{todo_status\}\}/g, todo.status)
     .replace(/\{\{subtasks\}\}/g, subtasksStr)
+    .replace(/\{\{analyses\}\}/g, analysesBlock)
     .replace(/\{\{user_prompt\}\}/g, userPrompt);
 }
 
@@ -318,7 +342,7 @@ class SessionStore extends EventEmitter {
     return this.sessions.has(todoId);
   }
 
-  start(todoId: number, prompt: string, cwd: string, attachmentIds: number[] = [], mode: AgentMode = 'work'): ClaudeSession {
+  start(todoId: number, prompt: string, cwd: string, attachmentIds: number[] = [], mode: AgentMode = 'work', includeAnalyses: boolean = false): ClaudeSession {
     if (!existsSync(cwd)) throw Object.assign(new Error(`Directory does not exist: ${cwd}`), { status: 400 });
     if (!statSync(cwd).isDirectory()) throw Object.assign(new Error(`Not a directory: ${cwd}`), { status: 400 });
 
@@ -334,7 +358,7 @@ class SessionStore extends EventEmitter {
     // Wrap the user prompt with the configured preprompt template (todo context,
     // subtasks, workflow instructions). Users can edit the template in Settings
     // — see apps/web/src/views/SettingsView.vue.
-    const renderedPrompt = renderPreprompt(todoId, prompt, mode);
+    const renderedPrompt = renderPreprompt(todoId, prompt, mode, includeAnalyses);
 
     const session: ClaudeSession = {
       todoId,

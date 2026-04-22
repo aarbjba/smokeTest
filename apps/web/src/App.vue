@@ -7,10 +7,12 @@ import QueueStrip from './components/QueueStrip.vue';
 import { onMounted, onUnmounted, ref } from 'vue';
 import { usePomodoroStore } from './stores/pomodoro';
 import { useUndoStore } from './stores/undo';
+import { useAgentSessionsStore } from './stores/agentSessions';
 import { useDueNotifications } from './composables/useDueNotifications';
 
 const pomodoro = usePomodoroStore();
 const undoStore = useUndoStore();
+const agentSessions = useAgentSessionsStore();
 
 // Due-date browser notifications — polls todos store every 5 min and fires a
 // Notification for each overdue, undone todo. Permission is NOT requested here
@@ -69,9 +71,14 @@ async function onKeydown(e: KeyboardEvent) {
 
 onMounted(() => {
   void pomodoro.refreshStats();
+  // Poll /api/agent/sessions every few seconds so board cards can light up
+  // with the iridescent "working right now" border for any todo whose
+  // Claude session is currently running.
+  agentSessions.startPolling();
   window.addEventListener('keydown', onKeydown);
 });
 onUnmounted(() => {
+  agentSessions.stopPolling();
   window.removeEventListener('keydown', onKeydown);
   if (toastTimer !== null) window.clearTimeout(toastTimer);
 });

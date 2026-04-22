@@ -16,12 +16,13 @@ const ATTACHMENT_KIND_ICON: Record<string, string> = {
 
 const props = defineProps<{ todo: Todo }>();
 const emit = defineEmits<{
-  (e: 'update-cwd', value: string | null): void;
   (e: 'active', value: boolean): void;
 }>();
 
+// Working directory is owned by the parent ("Aktuelle Aufgabe" card in
+// TodoDetailView.vue). We still load the default setting so effectiveCwd can
+// fall back when the todo has no explicit working_directory.
 const defaultCwd = ref<string>('');
-const localCwd = ref<string>(props.todo.working_directory ?? '');
 const prompt = ref<string>(buildDefaultPrompt(props.todo));
 const followup = ref<string>('');
 const session = ref<AgentSession | null>(null);
@@ -35,6 +36,12 @@ const outputEl = ref<HTMLPreElement | null>(null);
 const attachments = ref<Attachment[]>([]);
 const selectedAttachmentIds = ref<Set<number>>(new Set());
 
+// Prior analyse-mode outputs saved on this todo. When analysisCount > 0 the
+// panel shows a checkbox that injects them into the preprompt of the next
+// work-mode session.
+const analysisCount = ref<number>(0);
+const includeAnalyses = ref<boolean>(false);
+
 let eventSource: EventSource | null = null;
 
 const running = computed(() => session.value?.status === 'running');
@@ -44,7 +51,7 @@ const hasSessionId = computed(() => !!session.value?.sessionId);
 const turnCount = computed(() => session.value?.turns?.length ?? 0);
 const active = computed(() => running.value || hasOutput.value || hasSessionId.value);
 
-const effectiveCwd = computed(() => (localCwd.value || defaultCwd.value || '').trim());
+const effectiveCwd = computed(() => ((props.todo.working_directory ?? '') || defaultCwd.value || '').trim());
 const canRun = computed(() => !running.value && effectiveCwd.value.length > 0 && prompt.value.trim().length > 0);
 const canSend = computed(() => running.value && !turnActive.value && followup.value.trim().length > 0);
 
@@ -101,8 +108,10 @@ function subscribe() {
     session.value = data;
     scrollOutputToEnd();
     // Pick up attachments that were uploaded while Claude was thinking so the
-    // user can include them in the next send.
+    // user can include them in the next send, plus any analyses a just-finished
+    // analyse-mode turn persisted.
     void loadAttachments();
+    void loadAnalysisCount();
   });
 
   eventSource.addEventListener('cleared', () => {
@@ -161,6 +170,19 @@ function clearAttachmentSelection() {
 
 const selectedCount = computed(() => selectedAttachmentIds.value.size);
 
+async function loadAnalysisCount() {
+  try {
+    const rows = await api.analyses.byTodo(props.todo.id);
+    analysisCount.value = rows.length;
+    // Default on when analyses exist — freshly relevant context. Only seed the
+    // default before the user interacts; once they toggle it we respect their choice.
+    if (rows.length > 0 && !session.value) includeAnalyses.value = true;
+    if (rows.length === 0) includeAnalyses.value = false;
+  } catch {
+    /* non-fatal */
+  }
+}
+
 onMounted(async () => {
   try {
     const settings = await api.settings.getAll();
@@ -168,12 +190,12 @@ onMounted(async () => {
   } catch { /* ignore */ }
   subscribe();
   await loadAttachments();
+  await loadAnalysisCount();
 });
 
 onUnmounted(unsubscribe);
 
 watch(() => props.todo.id, () => {
-  localCwd.value = props.todo.working_directory ?? '';
   prompt.value = buildDefaultPrompt(props.todo);
   followup.value = '';
   output.value = '';
@@ -181,27 +203,15 @@ watch(() => props.todo.id, () => {
   error.value = null;
   attachments.value = [];
   selectedAttachmentIds.value = new Set();
+  analysisCount.value = 0;
+  includeAnalyses.value = false;
   unsubscribe();
   subscribe();
   void loadAttachments();
+  void loadAnalysisCount();
 });
 
 watch(active, (v) => emit('active', v));
-
-async function saveCwd() {
-  await fetch(`/api/todos/${props.todo.id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ working_directory: localCwd.value || null }),
-  });
-  emit('update-cwd', localCwd.value || null);
-}
-
-async function saveAsDefault() {
-  if (!localCwd.value.trim()) return;
-  await api.settings.set('defaultWorkingDirectory', localCwd.value.trim());
-  defaultCwd.value = localCwd.value.trim();
-}
 
 async function run() {
   if (!canRun.value) return;
@@ -209,7 +219,7 @@ async function run() {
   try {
     output.value = '';
     const ids = [...selectedAttachmentIds.value];
-    const res = await api.agent.start(props.todo.id, prompt.value, effectiveCwd.value, ids, 'work');
+    const res = await api.agent.start(props.todo.id, prompt.value, effectiveCwd.value, ids, 'work', includeAnalyses.value);
     session.value = res.session;
     output.value = res.session.output ?? '';
   } catch (e) {
@@ -316,24 +326,9 @@ const statusBadge = computed(() => {
       </div>
     </div>
 
-    <label class="stacked" style="margin-top: 0.75rem;">
-      <span>Arbeitsverzeichnis</span>
-      <div class="row grow" style="gap: 0.4rem;">
-        <input
-          v-model="localCwd"
-          type="text"
-          :placeholder="defaultCwd || 'z.B. D:\\programme\\werkbank'"
-        />
-        <button class="ghost" @click="saveCwd" :disabled="running" title="Für diesen Todo speichern">💾 Speichern</button>
-        <button class="ghost" @click="saveAsDefault" :disabled="running || !localCwd.trim()" title="Als Standard für alle Todos setzen">⭐ Als Standard</button>
-      </div>
-      <span v-if="!localCwd && defaultCwd" style="font-size: 0.78rem; color: var(--fg-muted);">
-        Fällt zurück auf Standard: <code>{{ defaultCwd }}</code>
-      </span>
-      <span v-else-if="!effectiveCwd" style="font-size: 0.78rem; color: var(--warning);">
-        Kein Ordner gesetzt — in Einstellungen einen Standard wählen oder hier eintragen.
-      </span>
-    </label>
+    <div v-if="!effectiveCwd" class="error-banner" style="margin-top: 0.75rem;">
+      Kein Arbeitsverzeichnis gesetzt — oben am Todo hinterlegen oder einen Standard speichern.
+    </div>
 
     <div v-if="attachments.length > 0" class="agent-attachments" style="margin-top: 0.75rem;">
       <div class="row" style="align-items: baseline; justify-content: space-between; gap: 0.5rem;">
@@ -368,6 +363,20 @@ const statusBadge = computed(() => {
         </li>
       </ul>
     </div>
+
+    <label
+      v-if="analysisCount > 0 && !running && turnCount === 0"
+      class="row"
+      style="margin-top: 0.75rem; align-items: baseline; gap: 0.5rem; cursor: pointer;"
+    >
+      <input type="checkbox" v-model="includeAnalyses" />
+      <span style="font-size: 0.9rem;">
+        🔍 Bisherige Analysen einbeziehen
+        <span style="color: var(--fg-muted); font-weight: normal; font-size: 0.8rem;">
+          ({{ analysisCount }} gespeichert — werden als Kontext in den Preprompt geladen)
+        </span>
+      </span>
+    </label>
 
     <label v-if="!running && turnCount === 0" class="stacked" style="margin-top: 0.75rem;">
       <span>Erste Nachricht</span>

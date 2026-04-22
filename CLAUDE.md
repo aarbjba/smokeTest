@@ -85,3 +85,8 @@ Vue 3 (Composition API, `<script setup>`), Pinia, Vue Router, Vite. No UI framew
 ### UI language
 
 The product UI and user-facing strings are **German** (Werkbank, Unter Hammer, Ablage, "Rückgängig gemacht", etc.). Code, commits, and comments are English. Preserve existing German labels when editing UI strings.
+
+
+NOTE:
+Always commit after implementing !
+Du startest keine Projekte selber forderst mich nur auf sie selber  zu starten etc. nur wenn ICH dich dazu bitte machst du das!

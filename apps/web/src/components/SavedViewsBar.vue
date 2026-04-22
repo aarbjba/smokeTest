@@ -24,7 +24,20 @@ onMounted(() => {
 const currentFilters = computed<SavedViewFilters>(() => ({
   sourceFilter: todos.sourceFilter,
   search: props.search,
+  tags: [...todos.activeTags],
+  repos: [...todos.activeRepos],
 }));
+
+function normalisedKey(f: SavedViewFilters): string {
+  const sortedTags = f.tags && f.tags.length > 0 ? [...f.tags].sort() : undefined;
+  const sortedRepos = f.repos && f.repos.length > 0 ? [...f.repos].sort() : undefined;
+  return JSON.stringify({
+    sourceFilter: f.sourceFilter === 'all' ? undefined : f.sourceFilter,
+    search: f.search && f.search.trim() !== '' ? f.search : undefined,
+    tags: sortedTags,
+    repos: sortedRepos,
+  });
+}
 
 // Auto-clear the active highlight as soon as the applied filters no longer
 // match the active view (e.g. the user edited the search box manually).
@@ -32,15 +45,7 @@ watch(currentFilters, (now) => {
   if (!views.activeId) return;
   const active = views.byId(views.activeId);
   if (!active) { views.activeId = null; return; }
-  const cur = {
-    sourceFilter: now.sourceFilter === 'all' ? undefined : now.sourceFilter,
-    search: now.search && now.search.trim() !== '' ? now.search : undefined,
-  };
-  const saved = {
-    sourceFilter: active.filters.sourceFilter,
-    search: active.filters.search,
-  };
-  if (JSON.stringify(cur) !== JSON.stringify(saved)) {
+  if (normalisedKey(now) !== normalisedKey(active.filters)) {
     views.activeId = null;
   }
 }, { deep: true });
@@ -48,6 +53,8 @@ watch(currentFilters, (now) => {
 function applyView(v: SavedView) {
   const sf = (v.filters.sourceFilter ?? 'all') as SourceFilter;
   todos.setSourceFilter(sf);
+  todos.setActiveTags(v.filters.tags ?? []);
+  todos.setActiveRepos(v.filters.repos ?? []);
   const search = v.filters.search ?? '';
   todos.search = search;
   emit('apply-search', search);
@@ -62,6 +69,8 @@ async function onSaveAs() {
   await views.create(trimmed, {
     sourceFilter: todos.sourceFilter,
     search: props.search,
+    tags: [...todos.activeTags],
+    repos: [...todos.activeRepos],
   });
 }
 

@@ -11,9 +11,9 @@ import type { SourceFilter } from '../types';
 export interface SavedViewFilters {
   sourceFilter?: SourceFilter;
   search?: string;
-  // Reserved for future filters (see FEATURES.md #3). Unused today but kept in
-  // the shape so persisted payloads are forward-compatible.
   tags?: string[];
+  repos?: string[];
+  // Reserved for future filters (see FEATURES.md #3).
   dueBefore?: string;
   status?: string[];
 }
@@ -32,6 +32,7 @@ function normaliseFilters(f: SavedViewFilters): SavedViewFilters {
   if (f.sourceFilter && f.sourceFilter !== 'all') out.sourceFilter = f.sourceFilter;
   if (f.search && f.search.trim() !== '') out.search = f.search;
   if (f.tags && f.tags.length > 0) out.tags = [...f.tags].sort();
+  if (f.repos && f.repos.length > 0) out.repos = [...f.repos].sort();
   if (f.dueBefore) out.dueBefore = f.dueBefore;
   if (f.status && f.status.length > 0) out.status = [...f.status].sort();
   return out;

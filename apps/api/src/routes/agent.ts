@@ -9,6 +9,7 @@ const StartSchema = z.object({
   cwd: z.string().min(1).max(1000),
   attachmentIds: z.array(z.number().int().positive()).max(100).optional(),
   mode: z.enum(['work', 'analyse']).optional().default('work'),
+  includeAnalyses: z.boolean().optional().default(false),
 });
 
 const SendSchema = z.object({
@@ -54,7 +55,7 @@ agentRouter.post('/session/:todoId/start', (req, res) => {
   const todoId = Number(req.params.todoId);
   const data = StartSchema.parse(req.body);
   try {
-    const session = claudeSessions.start(todoId, data.prompt, data.cwd, data.attachmentIds ?? [], data.mode);
+    const session = claudeSessions.start(todoId, data.prompt, data.cwd, data.attachmentIds ?? [], data.mode, data.includeAnalyses);
     res.status(201).json({ session: sessionSnapshot(session) });
   } catch (err) {
     const status = (err as { status?: number })?.status ?? 500;

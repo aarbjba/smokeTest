@@ -24,18 +24,26 @@ const queueStore = useQueueStore();
 const todo = ref<Todo | null>(null);
 const snippets = ref<Snippet[]>([]);
 const analyses = ref<Analysis[]>([]);
+const attachmentCount = ref(0);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const saving = ref(false);
 const tagsText = ref('');
 const agentActive = ref(false);
 
+// Tab state — "overview" is the default landing tab. Description, Subtasks and
+// Warteschlange live here because the user asked for them to always be one
+// click away.
+type TabKey = 'overview' | 'material' | 'analyses' | 'pomodoro' | 'mcp';
+const activeTab = ref<TabKey>('overview');
+
 // Queue integration.
-// queuedItem reflects this todo's entry in the automation queue (if any).
-// While queued, the user can edit queue_prompt and the runner will pick it up.
-// Once the runner starts a session, the queue row clears and status flips to
-// 'in_progress' — at which point we LOCK the main editable fields.
+// The runner now auto-injects a default prompt (title + description +
+// source_url) when queue_prompt is empty, mirroring the ClaudeAgent panel's
+// "Erste Nachricht" default. So the UI here no longer *requires* a prompt —
+// it's an optional override behind a small toggle.
 const queuePromptDraft = ref('');
+const queuePromptOverride = ref(false);
 const queuedItem = computed(() =>
   todo.value ? queueStore.byTodoId(todo.value.id) : undefined,
 );
@@ -56,6 +64,15 @@ async function loadAnalyses() {
     analyses.value = await api.analyses.byTodo(todoId.value);
   } catch {
     // Non-fatal — the rest of the detail page works without analyses.
+  }
+}
+
+async function loadAttachmentCount() {
+  try {
+    const rows = await api.attachments.byTodo(todoId.value);
+    attachmentCount.value = rows.length;
+  } catch {
+    /* non-fatal — badge just stays at 0 */
   }
 }
 
@@ -107,7 +124,7 @@ async function load() {
     todo.value = await api.todos.get(todoId.value);
     tagsText.value = todo.value.tags.join(', ');
     snippets.value = await api.snippets.byTodo(todoId.value);
-    await loadAnalyses();
+    await Promise.all([loadAnalyses(), loadAttachmentCount()]);
     // Refresh the queue snapshot so the Warteschlange card reflects reality
     // without waiting for the next poll tick.
     await queueStore.fetchAll();
@@ -120,7 +137,11 @@ async function load() {
 }
 
 function syncQueuePromptDraft() {
-  queuePromptDraft.value = queuedItem.value?.queue_prompt ?? '';
+  const remote = queuedItem.value?.queue_prompt ?? '';
+  queuePromptDraft.value = remote;
+  // If the queue already carries a custom prompt, keep the override editor
+  // open so the user can see it.
+  if (remote.trim()) queuePromptOverride.value = true;
 }
 
 // Whenever the queue store updates (poll tick, action elsewhere), re-sync the
@@ -140,7 +161,8 @@ watch(
 async function enqueue() {
   if (!todo.value || !canEnqueue.value) return;
   try {
-    await queueStore.enqueue(todo.value.id, queuePromptDraft.value, []);
+    const prompt = queuePromptOverride.value ? queuePromptDraft.value : '';
+    await queueStore.enqueue(todo.value.id, prompt, []);
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   }
@@ -158,7 +180,8 @@ async function dequeue() {
 async function saveQueuePrompt() {
   if (!todo.value || !isQueued.value) return;
   try {
-    await queueStore.update(todo.value.id, { prompt: queuePromptDraft.value });
+    const prompt = queuePromptOverride.value ? queuePromptDraft.value : '';
+    await queueStore.update(todo.value.id, { prompt });
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   }
@@ -169,6 +192,8 @@ onUnmounted(stopAnalysesPolling);
 watch(() => props.id, () => {
   stopAnalysesPolling();
   analyses.value = [];
+  attachmentCount.value = 0;
+  activeTab.value = 'overview';
   void load();
 });
 
@@ -182,6 +207,7 @@ watch(agentActive, (active) => {
     stopAnalysesPolling();
     // Final refresh after agent ends so we pick up anything saved on the last turn.
     void loadAnalyses();
+    void loadAttachmentCount();
   }
 });
 
@@ -232,10 +258,19 @@ async function deleteSnippet(id: number) {
 function onAgentCwdUpdate(cwd: string | null) {
   if (todo.value) todo.value.working_directory = cwd;
 }
+
+// Tab list driving the nav. Order matches the visual order of the tabs.
+const tabs = computed(() => [
+  { key: 'overview' as TabKey, label: '📝 Übersicht', badge: null as number | null },
+  { key: 'material' as TabKey, label: '📎 Material', badge: (snippets.value.length + attachmentCount.value) || null },
+  { key: 'analyses' as TabKey, label: '🔍 Analysen', badge: analyses.value.length || null },
+  { key: 'pomodoro' as TabKey, label: '🔨 Pomodoro', badge: null },
+  { key: 'mcp' as TabKey, label: '⚙️ MCP', badge: null },
+]);
 </script>
 
 <template>
-  <div class="detail" :class="{ 'two-col': agentActive }">
+  <div class="detail">
     <button class="ghost" @click="router.back()" style="align-self: flex-start;">← Zurück</button>
 
     <div v-if="error" class="error-banner">{{ error }}</div>
@@ -244,24 +279,25 @@ function onAgentCwdUpdate(cwd: string | null) {
     <template v-if="todo">
       <div class="detail-grid" :class="{ 'two-col': agentActive }">
         <div class="detail-main">
-          <div class="card">
-            <h2>
-              <span>{{ STATUS_ICONS[todo.status] }}</span>
-              <input v-model="todo.title" type="text" :disabled="editLocked" style="display: inline-block; width: calc(100% - 3rem);" />
-            </h2>
+          <!-- Header: always-visible meta strip -->
+          <div class="card detail-header">
+            <div class="title-row">
+              <span class="status-icon" :title="STATUS_LABELS[todo.status]">{{ STATUS_ICONS[todo.status] }}</span>
+              <input v-model="todo.title" type="text" :disabled="editLocked" placeholder="Titel…" />
+            </div>
 
             <div v-if="editLocked" class="lock-banner">
               🔒 Aufgabe läuft — Felder sind gesperrt, bis der Agent fertig ist.
             </div>
 
-            <div class="row" style="margin-bottom: 0.5rem;">
-              <label class="stacked" style="flex: 1;">
+            <div class="meta-grid">
+              <label>
                 <span>Status</span>
                 <select v-model="todo.status">
                   <option v-for="s in statuses" :key="s" :value="s">{{ STATUS_ICONS[s] }} {{ STATUS_LABELS[s] }}</option>
                 </select>
               </label>
-              <label class="stacked" style="flex: 1;">
+              <label>
                 <span>Priorität</span>
                 <select v-model.number="todo.priority">
                   <option :value="1">🔴 Dringend</option>
@@ -270,155 +306,194 @@ function onAgentCwdUpdate(cwd: string | null) {
                   <option :value="4">⚪ Irgendwann</option>
                 </select>
               </label>
-              <label class="stacked" style="flex: 1;">
+              <label>
                 <span>Fälligkeit</span>
                 <input type="date"
                   :value="todo.due_date ? todo.due_date.slice(0, 10) : ''"
                   @input="(e) => todo && (todo.due_date = (e.target as HTMLInputElement).value ? new Date((e.target as HTMLInputElement).value).toISOString() : null)"
                 />
               </label>
+              <label style="grid-column: span 2;">
+                <span>Tags (komma-getrennt)</span>
+                <input v-model="tagsText" type="text" placeholder="bugfix, api, urgent…" />
+              </label>
             </div>
 
-            <label class="stacked">
-              <span>Tags (komma-getrennt)</span>
-              <input v-model="tagsText" type="text" />
-            </label>
-
-            <label class="stacked" style="margin-top: 0.5rem;">
-              <span style="display: flex; justify-content: space-between; align-items: center;">
-                <span>Beschreibung</span>
-                <button type="button" class="ghost" @click="descriptionPreview = !descriptionPreview">
-                  {{ descriptionPreview ? 'Bearbeiten' : 'Vorschau' }}
-                </button>
-              </span>
-              <textarea
-                v-if="!descriptionPreview"
-                v-model="todo.description"
-                :disabled="editLocked"
-                rows="18"
-                style="min-height: 26rem; font-family: var(--font-mono); line-height: 1.5;"
-              />
-              <div
-                v-else
-                class="preview description-preview"
-                style="min-height: 26rem; line-height: 1.5;"
-                v-html="renderedDescription"
-              />
-            </label>
-
-            <div v-if="todo.source !== 'local'" class="row" style="margin-top: 0.5rem;">
-              <span class="tag">Quelle: {{ todo.source }}</span>
+            <div v-if="todo.source !== 'local' || todo.last_writeback_at" class="source-row">
+              <span v-if="todo.source !== 'local'" class="tag">Quelle: {{ todo.source }}</span>
               <a v-if="todo.source_url" :href="todo.source_url" target="_blank" rel="noopener">Original öffnen ↗</a>
               <span v-if="todo.last_writeback_at" class="tag" :title="new Date(todo.last_writeback_at).toLocaleString()">
                 ⬆ Letzter Writeback: {{ new Date(todo.last_writeback_at).toLocaleString() }}
               </span>
             </div>
 
-            <div v-if="todo.last_writeback_error" class="error-banner" style="margin-top: 0.5rem;">
+            <div v-if="todo.last_writeback_error" class="error-banner">
               ⚠️ Writeback fehlgeschlagen: {{ todo.last_writeback_error }}
             </div>
 
-            <div class="row" style="margin-top: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
-              <button class="primary" :disabled="saving || editLocked" @click="save">Speichern</button>
-              <button class="danger" :disabled="editLocked" @click="remove">Löschen</button>
+            <div class="actions-row">
+              <button class="primary" :disabled="saving || editLocked" @click="save">💾 Speichern</button>
+              <button class="danger" :disabled="editLocked" @click="remove">🗑 Löschen</button>
               <GitBranchButton :title="todo.title" :todo-id="todo.id" />
             </div>
           </div>
 
-          <div class="card">
-            <div class="row" style="justify-content: space-between; align-items: baseline;">
-              <h3 style="margin: 0;">📥 Warteschlange</h3>
-              <span v-if="isQueued && queuedItem" class="tag">Position {{ queuedItem.queue_position + 1 }}</span>
-            </div>
-            <p v-if="!isQueued && !canEnqueue" style="color: var(--fg-muted); font-size: 0.85rem; margin: 0.5rem 0 0 0;">
-              Nur Aufgaben im Status "🔧 Werkbank" können eingereiht werden.
-            </p>
-            <template v-else>
-              <p style="color: var(--fg-muted); font-size: 0.85rem; margin: 0.5rem 0;">
-                Der Runner startet die Aufgabe automatisch, sobald sie an der Reihe ist — dasselbe wie "Run Claude" manuell zu klicken.
-                Prompt und Auswahl sind hier bearbeitbar, bis der Lauf beginnt.
-              </p>
-              <label class="stacked">
-                <span>User-Prompt für den automatischen Start (optional)</span>
-                <textarea
-                  v-model="queuePromptDraft"
-                  rows="4"
-                  spellcheck="false"
-                  :placeholder="isQueued ? 'Zusätzliche Anweisung für Claude…' : 'Leer lassen, um nur die Aufgabenbeschreibung zu verwenden.'"
-                />
-              </label>
-              <div class="row" style="margin-top: 0.5rem; gap: 0.4rem; flex-wrap: wrap;">
-                <button
-                  v-if="!isQueued"
-                  class="primary"
-                  :disabled="!canEnqueue"
-                  @click="enqueue"
-                  title="In die Warteschlange einreihen"
-                >▶ In Warteschlange einreihen</button>
-                <template v-else>
-                  <button class="ghost" @click="saveQueuePrompt" title="Prompt aktualisieren">💾 Prompt speichern</button>
-                  <button class="danger" @click="dequeue" title="Aus der Warteschlange entfernen">✕ Aus Warteschlange</button>
-                </template>
+          <!-- Tab navigation -->
+          <nav class="detail-tabs" role="tablist">
+            <button
+              v-for="t in tabs"
+              :key="t.key"
+              type="button"
+              role="tab"
+              :aria-selected="activeTab === t.key"
+              :class="{ active: activeTab === t.key }"
+              @click="activeTab = t.key"
+            >
+              {{ t.label }}<span v-if="t.badge" class="tab-badge">{{ t.badge }}</span>
+            </button>
+          </nav>
+
+          <!-- Tab: Übersicht -->
+          <div v-if="activeTab === 'overview'" class="tab-panel">
+            <div class="card description-card">
+              <div class="description-head">
+                <h3 style="margin: 0;">📝 Beschreibung</h3>
+                <button type="button" class="ghost" @click="descriptionPreview = !descriptionPreview">
+                  {{ descriptionPreview ? 'Bearbeiten' : 'Vorschau' }}
+                </button>
               </div>
-            </template>
-          </div>
-
-          <div class="card">
-            <h3 style="margin: 0 0 0.75rem 0;">🔨 Pomodoro</h3>
-            <TodoPomodoro :todo-id="todo.id" />
-          </div>
-
-          <div class="card">
-            <AttachmentPanel :todo-id="todo.id" />
-          </div>
-
-          <div v-if="analyses.length > 0" class="card">
-            <h3 style="margin: 0 0 0.75rem 0;">🔍 Analysen</h3>
-            <ul class="analysis-list">
-              <li v-for="a in renderedAnalyses" :key="a.id" class="analysis-item">
-                <div class="analysis-header">
-                  <span class="analysis-time" :title="a.created_at">
-                    {{ new Date(a.created_at.replace(' ', 'T') + 'Z').toLocaleString() }}
-                  </span>
-                  <button
-                    class="danger"
-                    type="button"
-                    @click="deleteAnalysis(a.id)"
-                    title="Analyse löschen"
-                  >🗑</button>
-                </div>
-                <div class="analysis-body preview" v-html="a.html" />
-              </li>
-            </ul>
-          </div>
-
-          <div class="card">
-            <h3 style="margin: 0 0 0.75rem 0;">☑ Subtasks</h3>
-            <SubtaskList :todo-id="todo.id" :agent-active="agentActive" />
-          </div>
-
-          <div class="card">
-            <div class="row" style="justify-content: space-between;">
-              <h3 style="margin: 0;">📝 Snippets &amp; Notizen</h3>
-              <button class="primary" @click="addSnippet">+ Neues Snippet</button>
-            </div>
-            <div v-if="snippets.length === 0" class="empty">Noch keine Snippets.</div>
-            <div class="snippet-grid">
-              <SnippetEditor
-                v-for="s in snippets"
-                :key="s.id"
-                :snippet="s"
-                @save="(patch) => saveSnippet(s.id, patch)"
-                @delete="deleteSnippet(s.id)"
+              <textarea
+                v-if="!descriptionPreview"
+                v-model="todo.description"
+                :disabled="editLocked"
+                rows="18"
+                placeholder="Worum geht's? Markdown unterstützt…"
               />
+              <div
+                v-else-if="renderedDescription"
+                class="preview description-preview"
+                v-html="renderedDescription"
+              />
+              <div v-else class="empty description-preview">Keine Beschreibung.</div>
+            </div>
+
+            <div class="card">
+              <h3 style="margin: 0 0 0.75rem 0;">☑ Subtasks</h3>
+              <SubtaskList :todo-id="todo.id" :agent-active="agentActive" />
+            </div>
+
+            <div class="card">
+              <div class="row" style="justify-content: space-between; align-items: baseline;">
+                <h3 style="margin: 0;">📥 Warteschlange</h3>
+                <span v-if="isQueued && queuedItem" class="tag">Position {{ queuedItem.queue_position + 1 }}</span>
+              </div>
+              <p v-if="!isQueued && !canEnqueue" style="color: var(--fg-muted); font-size: 0.85rem; margin: 0.5rem 0 0 0;">
+                Nur Aufgaben im Status "🔧 Werkbank" können eingereiht werden.
+              </p>
+              <template v-else>
+                <p style="color: var(--fg-muted); font-size: 0.85rem; margin: 0.5rem 0;">
+                  Der Runner startet die Aufgabe automatisch mit <strong>Titel + Beschreibung</strong> als Prompt —
+                  genau wie "Run Claude" im Agent-Panel.
+                </p>
+                <label class="row" style="gap: 0.5rem; margin: 0.25rem 0; cursor: pointer; align-items: center;">
+                  <input type="checkbox" v-model="queuePromptOverride" />
+                  <span style="font-size: 0.88rem;">Prompt überschreiben (optional)</span>
+                </label>
+                <label v-if="queuePromptOverride" class="stacked">
+                  <span style="color: var(--fg-muted); font-size: 0.8rem;">
+                    Eigener User-Prompt — ersetzt Titel + Beschreibung im ersten Turn
+                  </span>
+                  <textarea
+                    v-model="queuePromptDraft"
+                    rows="4"
+                    spellcheck="false"
+                    placeholder="Zusätzliche Anweisung für Claude…"
+                  />
+                </label>
+                <div class="row" style="margin-top: 0.5rem; gap: 0.4rem; flex-wrap: wrap;">
+                  <button
+                    v-if="!isQueued"
+                    class="primary"
+                    :disabled="!canEnqueue"
+                    @click="enqueue"
+                    title="In die Warteschlange einreihen"
+                  >▶ In Warteschlange einreihen</button>
+                  <template v-else>
+                    <button class="ghost" @click="saveQueuePrompt" title="Prompt aktualisieren">💾 Prompt speichern</button>
+                    <button class="danger" @click="dequeue" title="Aus der Warteschlange entfernen">✕ Aus Warteschlange</button>
+                  </template>
+                </div>
+              </template>
             </div>
           </div>
 
-          <div class="card">
-            <McpServersPanel :todo-id="todo.id" />
+          <!-- Tab: Material — Attachments + Snippets -->
+          <div v-if="activeTab === 'material'" class="tab-panel">
+            <div class="card">
+              <AttachmentPanel :todo-id="todo.id" />
+            </div>
+
+            <div class="card">
+              <div class="row" style="justify-content: space-between;">
+                <h3 style="margin: 0;">📝 Snippets &amp; Notizen</h3>
+                <button class="primary" @click="addSnippet">+ Neues Snippet</button>
+              </div>
+              <div v-if="snippets.length === 0" class="empty">Noch keine Snippets.</div>
+              <div class="snippet-grid">
+                <SnippetEditor
+                  v-for="s in snippets"
+                  :key="s.id"
+                  :snippet="s"
+                  @save="(patch) => saveSnippet(s.id, patch)"
+                  @delete="deleteSnippet(s.id)"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab: Analysen -->
+          <div v-if="activeTab === 'analyses'" class="tab-panel">
+            <div class="card">
+              <h3 style="margin: 0 0 0.75rem 0;">🔍 Analysen</h3>
+              <p v-if="analyses.length === 0" class="empty" style="margin: 0;">
+                Noch keine Analysen. Starte im Agent-Panel den Analyse-Modus.
+              </p>
+              <ul v-else class="analysis-list">
+                <li v-for="a in renderedAnalyses" :key="a.id" class="analysis-item">
+                  <div class="analysis-header">
+                    <span class="analysis-time" :title="a.created_at">
+                      {{ new Date(a.created_at.replace(' ', 'T') + 'Z').toLocaleString() }}
+                    </span>
+                    <button
+                      class="danger"
+                      type="button"
+                      @click="deleteAnalysis(a.id)"
+                      title="Analyse löschen"
+                    >🗑</button>
+                  </div>
+                  <div class="analysis-body preview" v-html="a.html" />
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- Tab: Pomodoro -->
+          <div v-if="activeTab === 'pomodoro'" class="tab-panel">
+            <div class="card">
+              <h3 style="margin: 0 0 0.75rem 0;">🔨 Pomodoro</h3>
+              <TodoPomodoro :todo-id="todo.id" />
+            </div>
+          </div>
+
+          <!-- Tab: MCP -->
+          <div v-if="activeTab === 'mcp'" class="tab-panel">
+            <div class="card">
+              <McpServersPanel :todo-id="todo.id" />
+            </div>
           </div>
         </div>
 
+        <!-- Claude agent panel: sticky sidebar while active. -->
         <div class="detail-side">
           <div class="card">
             <ClaudeAgent

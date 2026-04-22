@@ -36,7 +36,10 @@ const PORT = Number(process.env.API_PORT ?? 3001);
 initDb();
 
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: '2mb' }));
+// strict:false lets settings values be bare JSON strings/numbers/bools, not
+// just objects/arrays — matches the contract of /api/settings/:key PUT and
+// matches what api.settings.set() already sends (JSON.stringify of any value).
+app.use(express.json({ limit: '2mb', strict: false }));
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
