@@ -153,7 +153,7 @@ export const api = {
   },
   ai: {
     reformulateTodo: (text: string) =>
-      request<{ title: string; subtasks: string[] }>(`/ai/reformulate-todo`, {
+      request<{ title: string; description: string; tags: string[]; subtasks: string[] }>(`/ai/reformulate-todo`, {
         method: 'POST',
         body: JSON.stringify({ text }),
       }),
@@ -192,12 +192,14 @@ export const api = {
       }),
   },
   agent: {
+    list: () =>
+      request<{ sessions: AgentSession[] }>(`/agent/sessions`),
     getSession: (todoId: number) =>
       request<{ session: AgentSession | null }>(`/agent/session/${todoId}`),
-    start: (todoId: number, prompt: string, cwd: string, attachmentIds: number[] = [], mode: 'work' | 'analyse' = 'work') =>
+    start: (todoId: number, prompt: string, cwd: string, attachmentIds: number[] = [], mode: 'work' | 'analyse' = 'work', includeAnalyses: boolean = false) =>
       request<{ session: AgentSession }>(`/agent/session/${todoId}/start`, {
         method: 'POST',
-        body: JSON.stringify({ prompt, cwd, attachmentIds, mode }),
+        body: JSON.stringify({ prompt, cwd, attachmentIds, mode, includeAnalyses }),
       }),
     send: (todoId: number, prompt: string, attachmentIds: number[] = []) =>
       request<{ session: AgentSession }>(`/agent/session/${todoId}/send`, {

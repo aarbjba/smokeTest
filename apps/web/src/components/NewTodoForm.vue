@@ -9,14 +9,16 @@ const title = ref('');
 const priority = ref<1 | 2 | 3 | 4>(2);
 const tagsText = ref('');
 const dueDate = ref('');
+const description = ref('');
 const saving = ref(false);
 
-// AI reformulation state. `aiSubtasks` is an editable list the user can
-// tick off before submitting — checked ones get created as subtasks on the
-// new todo. The whole AI panel is cleared on successful submit.
+// AI reformulation state. Tags + description come back as editable fields the
+// user can still tweak before submit; subtasks are tickable checkboxes.
+// The whole AI panel is cleared on successful submit.
 const aiLoading = ref(false);
 const aiError = ref<string | null>(null);
 const aiSubtasks = ref<Array<{ title: string; accepted: boolean }>>([]);
+const aiDescriptionShown = ref(false);
 
 async function reformulateWithAI() {
   const raw = title.value.trim();
@@ -26,6 +28,21 @@ async function reformulateWithAI() {
   try {
     const result = await api.ai.reformulateTodo(raw);
     if (result.title) title.value = result.title;
+    // Merge AI tags into whatever the user already typed, de-duped. Preserves
+    // manual input so the AI pass feels additive, not destructive.
+    if (result.tags.length > 0) {
+      const manual = tagsText.value
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const merged = Array.from(new Set([...manual, ...result.tags]));
+      tagsText.value = merged.join(', ');
+    }
+    if (result.description) {
+      // Don't overwrite a description the user already typed.
+      if (!description.value.trim()) description.value = result.description;
+      aiDescriptionShown.value = true;
+    }
     aiSubtasks.value = result.subtasks.map((s) => ({ title: s, accepted: true }));
   } catch (e) {
     aiError.value = e instanceof Error ? e.message : String(e);
@@ -100,11 +117,13 @@ async function submit() {
 
   saving.value = true;
   try {
+    const finalDescription = description.value.trim();
     const created = await todos.create({
       title: finalTitle,
       priority: finalPriority,
       tags: mergedTags,
       due_date: finalDueDate,
+      ...(finalDescription ? { description: finalDescription } : {}),
     });
     // If the AI panel produced subtasks and the user left them checked, persist
     // them. Errors here are non-fatal to the todo creation — surface them in
@@ -123,6 +142,8 @@ async function submit() {
     tagsText.value = '';
     dueDate.value = '';
     priority.value = 2;
+    description.value = '';
+    aiDescriptionShown.value = false;
     aiSubtasks.value = [];
     aiError.value = null;
   } finally {
@@ -168,6 +189,23 @@ async function submit() {
       <button type="submit" class="primary" :disabled="saving || !parsed.title.trim()">Anheften</button>
     </form>
     <div v-if="aiError" class="ai-error">{{ aiError }}</div>
+    <div v-if="aiDescriptionShown || description" class="ai-description">
+      <div class="ai-description-header">
+        <span>Beschreibung</span>
+        <button
+          type="button"
+          class="ghost"
+          @click="description = ''; aiDescriptionShown = false"
+          title="Beschreibung verwerfen"
+        >✕</button>
+      </div>
+      <textarea
+        v-model="description"
+        class="ai-description-input"
+        rows="3"
+        placeholder="Kurze Beschreibung zur Aufgabe…"
+      />
+    </div>
     <div v-if="aiSubtasks.length > 0" class="ai-subtasks">
       <div class="ai-subtasks-header">
         <span>Vorgeschlagene Subtasks</span>
@@ -273,12 +311,30 @@ async function submit() {
   color: var(--danger, #ef4444);
   font-size: 0.82rem;
 }
-.ai-subtasks {
+.ai-subtasks,
+.ai-description {
   margin-top: 0.6rem;
   border: 1px dashed var(--border);
   border-radius: var(--radius);
   padding: 0.5rem 0.75rem;
   background: color-mix(in srgb, #8b5cf6 8%, var(--bg-elev));
+}
+.ai-description-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  margin-bottom: 0.4rem;
+}
+.ai-description-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 0.9rem;
 }
 .ai-subtasks-header {
   display: flex;
