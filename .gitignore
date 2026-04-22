@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.log
+.env
+.env.local
+data/
+*.db
+*.db-journal
+.DS_Store
+.vscode/
+.idea/
+
+# Private local MCP config (per-install, may contain machine-specific paths).
+.mcp.json

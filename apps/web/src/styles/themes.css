@@ -1,0 +1,82 @@
+/* Werkbank themes — 4 umschaltbare Farb-Paletten via data-theme auf <body>. */
+
+:root,
+body[data-theme='workshop'] {
+  --bg:          #2b1e13;
+  --bg-elev:    #3a2a1c;
+  --bg-card:    #4a3726;
+  --fg:          #f1e3cc;
+  --fg-muted:    #b79876;
+  --accent:      #d94f2a;  /* rust */
+  --accent-2:    #c9a87c;  /* brass */
+  --border:      #5c4532;
+  --danger:      #c14040;
+  --success:     #8ab26b;
+  --warning:     #e6b23a;
+  --font-display: 'Georgia', serif;
+  --font-body:    system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono:    ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  --radius:       6px;
+  --shadow:       0 4px 14px rgba(0,0,0,0.35);
+  --grain:        repeating-linear-gradient(90deg, rgba(0,0,0,0.04) 0 2px, transparent 2px 6px);
+}
+
+body[data-theme='dark'] {
+  --bg:          #0f1115;
+  --bg-elev:    #171a21;
+  --bg-card:    #1f232c;
+  --fg:          #e7e9ee;
+  --fg-muted:    #8b92a1;
+  --accent:      #7aa2f7;
+  --accent-2:    #bb9af7;
+  --border:      #2a2f3a;
+  --danger:      #e06c75;
+  --success:     #98c379;
+  --warning:     #e5c07b;
+  --font-display: system-ui, sans-serif;
+  --font-body:    system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono:    ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  --radius:       8px;
+  --shadow:       0 4px 14px rgba(0,0,0,0.6);
+  --grain:        none;
+}
+
+body[data-theme='light'] {
+  --bg:          #f7f7f5;
+  --bg-elev:    #ffffff;
+  --bg-card:    #ffffff;
+  --fg:          #1a1a1a;
+  --fg-muted:    #666;
+  --accent:      #2563eb;
+  --accent-2:    #7c3aed;
+  --border:      #e5e7eb;
+  --danger:      #dc2626;
+  --success:     #16a34a;
+  --warning:     #d97706;
+  --font-display: system-ui, sans-serif;
+  --font-body:    system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono:    ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  --radius:       8px;
+  --shadow:       0 2px 10px rgba(0,0,0,0.08);
+  --grain:        none;
+}
+
+body[data-theme='terminal'] {
+  --bg:          #0a0f0a;
+  --bg-elev:    #0e140e;
+  --bg-card:    #0f1a0f;
+  --fg:          #8fff8f;
+  --fg-muted:    #4a8f4a;
+  --accent:      #00ff41;
+  --accent-2:    #7fff00;
+  --border:      #1f3a1f;
+  --danger:      #ff5050;
+  --success:     #00ff41;
+  --warning:     #f0e050;
+  --font-display: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  --font-body:    ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  --font-mono:    ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  --radius:       0;
+  --shadow:       0 0 0 1px rgba(0,255,65,0.25);
+  --grain:        repeating-linear-gradient(0deg, rgba(0,255,65,0.03) 0 1px, transparent 1px 3px);
+}
