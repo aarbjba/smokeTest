@@ -21,6 +21,8 @@ const router = useRouter();
 const todos = useTodosStore();
 const queueStore = useQueueStore();
 
+const isNew = computed(() => props.id === 'new');
+
 const todo = ref<Todo | null>(null);
 const snippets = ref<Snippet[]>([]);
 const analyses = ref<Analysis[]>([]);
@@ -30,6 +32,28 @@ const error = ref<string | null>(null);
 const saving = ref(false);
 const tagsText = ref('');
 const agentActive = ref(false);
+const defaultWorkingDirectory = ref<string>('');
+const savingCwd = ref(false);
+
+function emptyTodoDraft(): Todo {
+  return {
+    id: 0,
+    title: '',
+    description: '',
+    status: 'todo',
+    priority: 2,
+    tags: [],
+    due_date: null,
+    source: 'local',
+    source_ref: null,
+    source_url: null,
+    created_at: '',
+    updated_at: '',
+    last_writeback_error: null,
+    last_writeback_at: null,
+    working_directory: '',
+  };
+}
 
 // Tab state — "overview" is the default landing tab. Description, Subtasks and
 // Warteschlange live here because the user asked for them to always be one
@@ -121,10 +145,19 @@ async function load() {
   loading.value = true;
   error.value = null;
   try {
+    if (isNew.value) {
+      todo.value = emptyTodoDraft();
+      tagsText.value = '';
+      snippets.value = [];
+      analyses.value = [];
+      attachmentCount.value = 0;
+      await loadDefaultCwd();
+      return;
+    }
     todo.value = await api.todos.get(todoId.value);
     tagsText.value = todo.value.tags.join(', ');
     snippets.value = await api.snippets.byTodo(todoId.value);
-    await Promise.all([loadAnalyses(), loadAttachmentCount()]);
+    await Promise.all([loadAnalyses(), loadAttachmentCount(), loadDefaultCwd()]);
     // Refresh the queue snapshot so the Warteschlange card reflects reality
     // without waiting for the next poll tick.
     await queueStore.fetchAll();
@@ -133,6 +166,29 @@ async function load() {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadDefaultCwd() {
+  try {
+    const settings = await api.settings.getAll();
+    defaultWorkingDirectory.value = (settings.defaultWorkingDirectory as string) ?? '';
+  } catch {
+    /* non-fatal — hint just won't show */
+  }
+}
+
+async function saveWorkingDirectory() {
+  if (!todo.value) return;
+  savingCwd.value = true;
+  try {
+    const next = (todo.value.working_directory ?? '').trim() || null;
+    const updated = await todos.update(todo.value.id, { working_directory: next });
+    todo.value = updated;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    savingCwd.value = false;
   }
 }
 
@@ -213,14 +269,32 @@ watch(agentActive, (active) => {
 
 async function save() {
   if (!todo.value) return;
+  if (isNew.value && !todo.value.title.trim()) {
+    error.value = 'Titel darf nicht leer sein.';
+    return;
+  }
   saving.value = true;
   try {
+    const tags = tagsText.value.split(',').map((t) => t.trim()).filter(Boolean);
+    if (isNew.value) {
+      const created = await todos.create({
+        title: todo.value.title.trim(),
+        description: todo.value.description ?? '',
+        status: todo.value.status,
+        priority: todo.value.priority,
+        tags,
+        due_date: todo.value.due_date,
+        working_directory: (todo.value.working_directory ?? '').trim() || null,
+      });
+      router.replace(`/todo/${created.id}`);
+      return;
+    }
     const updated = await todos.update(todo.value.id, {
       title: todo.value.title,
       description: todo.value.description,
       status: todo.value.status,
       priority: todo.value.priority,
-      tags: tagsText.value.split(',').map((t) => t.trim()).filter(Boolean),
+      tags,
       due_date: todo.value.due_date,
     });
     todo.value = updated;
@@ -277,10 +351,13 @@ const tabs = computed(() => [
     <div v-if="loading">Lade…</div>
 
     <template v-if="todo">
-      <div class="detail-grid" :class="{ 'two-col': agentActive }">
+      <div class="detail-grid" :class="{ 'two-col': !isNew && agentActive }">
         <div class="detail-main">
           <!-- Header: always-visible meta strip -->
           <div class="card detail-header">
+            <div v-if="isNew" class="new-banner">
+              ➕ Neue Aufgabe erstellen — fülle die Felder aus und klicke auf <strong>Erstellen</strong>.
+            </div>
             <div class="title-row">
               <span class="status-icon" :title="STATUS_LABELS[todo.status]">{{ STATUS_ICONS[todo.status] }}</span>
               <input v-model="todo.title" type="text" :disabled="editLocked" placeholder="Titel…" />
@@ -317,9 +394,34 @@ const tabs = computed(() => [
                 <span>Tags (komma-getrennt)</span>
                 <input v-model="tagsText" type="text" placeholder="bugfix, api, urgent…" />
               </label>
+              <label style="grid-column: span 2;">
+                <span>
+                  Arbeitsverzeichnis
+                  <span style="color: var(--fg-muted); font-weight: normal; font-size: 0.78rem;">
+                    (leer lassen für Standard<template v-if="defaultWorkingDirectory">: <code>{{ defaultWorkingDirectory }}</code></template>)
+                  </span>
+                </span>
+                <div class="row" style="gap: 0.4rem; align-items: stretch;">
+                  <input
+                    v-model="todo.working_directory"
+                    type="text"
+                    spellcheck="false"
+                    :placeholder="defaultWorkingDirectory || 'z. B. D:\\programme\\werkbank'"
+                    style="flex: 1; font-family: var(--font-mono);"
+                    @keydown.enter.prevent="saveWorkingDirectory"
+                  />
+                  <button
+                    type="button"
+                    class="ghost"
+                    :disabled="savingCwd"
+                    @click="saveWorkingDirectory"
+                    title="Arbeitsverzeichnis übernehmen"
+                  >💾</button>
+                </div>
+              </label>
             </div>
 
-            <div v-if="todo.source !== 'local' || todo.last_writeback_at" class="source-row">
+            <div v-if="!isNew && (todo.source !== 'local' || todo.last_writeback_at)" class="source-row">
               <span v-if="todo.source !== 'local'" class="tag">Quelle: {{ todo.source }}</span>
               <a v-if="todo.source_url" :href="todo.source_url" target="_blank" rel="noopener">Original öffnen ↗</a>
               <span v-if="todo.last_writeback_at" class="tag" :title="new Date(todo.last_writeback_at).toLocaleString()">
@@ -327,19 +429,48 @@ const tabs = computed(() => [
               </span>
             </div>
 
-            <div v-if="todo.last_writeback_error" class="error-banner">
+            <div v-if="!isNew && todo.last_writeback_error" class="error-banner">
               ⚠️ Writeback fehlgeschlagen: {{ todo.last_writeback_error }}
             </div>
 
             <div class="actions-row">
-              <button class="primary" :disabled="saving || editLocked" @click="save">💾 Speichern</button>
-              <button class="danger" :disabled="editLocked" @click="remove">🗑 Löschen</button>
-              <GitBranchButton :title="todo.title" :todo-id="todo.id" />
+              <button class="primary" :disabled="saving || editLocked" @click="save">
+                {{ isNew ? '➕ Erstellen' : '💾 Speichern' }}
+              </button>
+              <button v-if="isNew" class="ghost" :disabled="saving" @click="router.back()">Abbrechen</button>
+              <template v-else>
+                <button class="danger" :disabled="editLocked" @click="remove">🗑 Löschen</button>
+                <GitBranchButton :title="todo.title" :todo-id="todo.id" />
+              </template>
             </div>
           </div>
 
-          <!-- Tab navigation -->
-          <nav class="detail-tabs" role="tablist">
+          <!-- In new-mode: a simplified description editor replaces the tab layout.
+               Subtasks/snippets/attachments/analyses/pomodoro/MCP all need a
+               persistent todo id, so they only appear after creation. -->
+          <div v-if="isNew" class="card description-card">
+            <div class="description-head">
+              <h3 style="margin: 0;">📝 Beschreibung</h3>
+              <button type="button" class="ghost" @click="descriptionPreview = !descriptionPreview">
+                {{ descriptionPreview ? 'Bearbeiten' : 'Vorschau' }}
+              </button>
+            </div>
+            <textarea
+              v-if="!descriptionPreview"
+              v-model="todo.description"
+              rows="18"
+              placeholder="Worum geht's? Markdown unterstützt…"
+            />
+            <div
+              v-else-if="renderedDescription"
+              class="preview description-preview"
+              v-html="renderedDescription"
+            />
+            <div v-else class="empty description-preview">Keine Beschreibung.</div>
+          </div>
+
+          <!-- Tab navigation (only for existing todos) -->
+          <nav v-if="!isNew" class="detail-tabs" role="tablist">
             <button
               v-for="t in tabs"
               :key="t.key"
@@ -354,7 +485,7 @@ const tabs = computed(() => [
           </nav>
 
           <!-- Tab: Übersicht -->
-          <div v-if="activeTab === 'overview'" class="tab-panel">
+          <div v-if="!isNew && activeTab === 'overview'" class="tab-panel">
             <div class="card description-card">
               <div class="description-head">
                 <h3 style="margin: 0;">📝 Beschreibung</h3>
@@ -428,7 +559,7 @@ const tabs = computed(() => [
           </div>
 
           <!-- Tab: Material — Attachments + Snippets -->
-          <div v-if="activeTab === 'material'" class="tab-panel">
+          <div v-if="!isNew && activeTab === 'material'" class="tab-panel">
             <div class="card">
               <AttachmentPanel :todo-id="todo.id" />
             </div>
@@ -452,7 +583,7 @@ const tabs = computed(() => [
           </div>
 
           <!-- Tab: Analysen -->
-          <div v-if="activeTab === 'analyses'" class="tab-panel">
+          <div v-if="!isNew && activeTab === 'analyses'" class="tab-panel">
             <div class="card">
               <h3 style="margin: 0 0 0.75rem 0;">🔍 Analysen</h3>
               <p v-if="analyses.length === 0" class="empty" style="margin: 0;">
@@ -478,7 +609,7 @@ const tabs = computed(() => [
           </div>
 
           <!-- Tab: Pomodoro -->
-          <div v-if="activeTab === 'pomodoro'" class="tab-panel">
+          <div v-if="!isNew && activeTab === 'pomodoro'" class="tab-panel">
             <div class="card">
               <h3 style="margin: 0 0 0.75rem 0;">🔨 Pomodoro</h3>
               <TodoPomodoro :todo-id="todo.id" />
@@ -486,15 +617,16 @@ const tabs = computed(() => [
           </div>
 
           <!-- Tab: MCP -->
-          <div v-if="activeTab === 'mcp'" class="tab-panel">
+          <div v-if="!isNew && activeTab === 'mcp'" class="tab-panel">
             <div class="card">
               <McpServersPanel :todo-id="todo.id" />
             </div>
           </div>
         </div>
 
-        <!-- Claude agent panel: sticky sidebar while active. -->
-        <div class="detail-side">
+        <!-- Claude agent panel: sticky sidebar while active.
+             Hidden in new-mode — the agent needs a persisted todo id. -->
+        <div v-if="!isNew" class="detail-side">
           <div class="card">
             <ClaudeAgent
               :todo="todo"
@@ -558,5 +690,14 @@ const tabs = computed(() => [
   background: var(--bg-elev);
   color: var(--fg-muted);
   font-size: 0.85rem;
+}
+.new-banner {
+  margin: 0 0 0.75rem 0;
+  padding: 0.4rem 0.6rem;
+  border: 1px dashed color-mix(in srgb, #3b82f6 60%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, #3b82f6 12%, var(--bg-elev));
+  color: var(--fg);
+  font-size: 0.88rem;
 }
 </style>

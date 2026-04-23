@@ -14,6 +14,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', name: 'board', component: BoardView },
+    { path: '/todo/new', name: 'todo-new', component: TodoDetailView, props: { id: 'new' } },
     { path: '/todo/:id', name: 'todo', component: TodoDetailView, props: true },
     { path: '/papierkorb', name: 'papierkorb', component: PapierkorbView },
     { path: '/settings', name: 'settings', component: SettingsView },

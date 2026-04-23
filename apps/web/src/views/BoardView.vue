@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { useTodosStore } from '../stores/todos';
 import type { TodoStatus } from '../types';
 import { api } from '../api';
@@ -11,6 +12,7 @@ import StandupButton from '../components/StandupButton.vue';
 import BulkActionsBar from '../components/BulkActionsBar.vue';
 
 const todos = useTodosStore();
+const router = useRouter();
 const statuses: TodoStatus[] = ['todo', 'in_progress', 'test', 'done'];
 const search = ref(todos.search ?? '');
 const newTodoForm = ref<InstanceType<typeof NewTodoForm> | null>(null);
@@ -166,6 +168,13 @@ function flash(msg: string, isError = false) {
       <FilterBar />
       <div class="spacer" style="flex: 1;" />
       <StandupButton />
+      <button
+        class="primary"
+        title="Neue Aufgabe mit vollständigem Formular erstellen"
+        @click="router.push('/todo/new')"
+      >
+        ➕ Neue Aufgabe
+      </button>
       <button class="ghost" @click="todos.fetchAll()" :disabled="todos.loading">
         {{ todos.loading ? 'Lade…' : '↻ Aktualisieren' }}
       </button>
