@@ -20,6 +20,7 @@ type TodoRow = {
   updated_at: string;
   last_writeback_error: string | null;
   last_writeback_at: string | null;
+  task_type?: string;
   subtask_total?: number;
   subtask_done?: number;
   subtask_suggested?: number;
@@ -211,8 +212,8 @@ todosRouter.get('/:id', (req, res) => {
 todosRouter.post('/', (req, res) => {
   const data = CreateTodoSchema.parse(req.body);
   const info = db.prepare(
-    `INSERT INTO todos (title, description, status, priority, tags, due_date, source)
-     VALUES (@title, @description, @status, @priority, @tags, @due_date, 'local')`
+    `INSERT INTO todos (title, description, status, priority, tags, due_date, source, task_type)
+     VALUES (@title, @description, @status, @priority, @tags, @due_date, 'local', @task_type)`
   ).run({
     title: data.title,
     description: data.description ?? '',
@@ -220,6 +221,7 @@ todosRouter.post('/', (req, res) => {
     priority: data.priority ?? 2,
     tags: JSON.stringify(data.tags ?? []),
     due_date: data.due_date ?? null,
+    task_type: data.task_type ?? 'other',
   });
   const row = db.prepare(`SELECT * FROM todos WHERE id = ?`).get(info.lastInsertRowid) as TodoRow;
   res.status(201).json(hydrate(row));
@@ -231,7 +233,7 @@ todosRouter.patch('/:id', async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Not found' });
 
   const patch = UpdateTodoSchema.parse(req.body);
-  const existingRaw = existing as unknown as { working_directory: string | null };
+  const existingRaw = existing as unknown as { working_directory: string | null; task_type: string | null };
   const merged = {
     title: patch.title ?? existing.title,
     description: patch.description ?? existing.description,
@@ -240,10 +242,12 @@ todosRouter.patch('/:id', async (req, res) => {
     tags: patch.tags !== undefined ? JSON.stringify(patch.tags) : existing.tags,
     due_date: patch.due_date !== undefined ? patch.due_date : existing.due_date,
     working_directory: patch.working_directory !== undefined ? patch.working_directory : existingRaw.working_directory,
+    task_type: patch.task_type ?? existingRaw.task_type ?? 'other',
   };
   db.prepare(
     `UPDATE todos SET title=@title, description=@description, status=@status, priority=@priority,
-     tags=@tags, due_date=@due_date, working_directory=@working_directory, updated_at=datetime('now') WHERE id=@id`
+     tags=@tags, due_date=@due_date, working_directory=@working_directory, task_type=@task_type,
+     updated_at=datetime('now') WHERE id=@id`
   ).run({ ...merged, id });
 
   // Writeback to GitHub/Jira if status changed on a non-local todo.

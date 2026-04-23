@@ -153,6 +153,11 @@ export function initDb() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_todos_queue_position ON todos(queue_position)`);
   // Analyse-mode artifact: subtasks flagged as suggestions awaiting accept/reject.
   addColumnIfMissing('subtasks', 'suggested', 'INTEGER NOT NULL DEFAULT 0');
+  // Aufgabentyp: classifies the todo (feature/bug/chore/customer/research/other).
+  // No CHECK constraint — validation happens in the Zod layer (schemas.ts) so we
+  // can evolve the enum without schema rebuilds.
+  addColumnIfMissing('todos', 'task_type', `TEXT NOT NULL DEFAULT 'other'`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_todos_task_type ON todos(task_type)`);
   // Seed positions for existing rows so ordering is stable.
   db.exec(`
     UPDATE todos SET position = id WHERE position = 0;

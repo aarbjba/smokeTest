@@ -3,8 +3,8 @@ import { onMounted, onUnmounted, ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { marked } from 'marked';
 import { api } from '../api';
-import type { Todo, Snippet, TodoStatus, Analysis } from '../types';
-import { STATUS_LABELS, STATUS_ICONS } from '../types';
+import type { Todo, Snippet, TodoStatus, Analysis, TaskType } from '../types';
+import { STATUS_LABELS, STATUS_ICONS, TASK_TYPE_LABELS, TASK_TYPE_ICONS, TASK_TYPES } from '../types';
 import { useTodosStore } from '../stores/todos';
 import { useQueueStore } from '../stores/queue';
 import SnippetEditor from '../components/SnippetEditor.vue';
@@ -52,6 +52,7 @@ function emptyTodoDraft(): Todo {
     last_writeback_error: null,
     last_writeback_at: null,
     working_directory: '',
+    task_type: 'other',
   };
 }
 
@@ -285,6 +286,7 @@ async function save() {
         tags,
         due_date: todo.value.due_date,
         working_directory: (todo.value.working_directory ?? '').trim() || null,
+        task_type: todo.value.task_type ?? 'other',
       });
       router.replace(`/todo/${created.id}`);
       return;
@@ -296,6 +298,7 @@ async function save() {
       priority: todo.value.priority,
       tags,
       due_date: todo.value.due_date,
+      task_type: todo.value.task_type ?? 'other',
     });
     todo.value = updated;
   } catch (e) {
@@ -381,6 +384,14 @@ const tabs = computed(() => [
                   <option :value="2">🟡 Normal</option>
                   <option :value="3">🟢 Niedrig</option>
                   <option :value="4">⚪ Irgendwann</option>
+                </select>
+              </label>
+              <label>
+                <span>Typ</span>
+                <select v-model="todo.task_type">
+                  <option v-for="t in TASK_TYPES" :key="t" :value="t">
+                    {{ TASK_TYPE_ICONS[t] }} {{ TASK_TYPE_LABELS[t] }}
+                  </option>
                 </select>
               </label>
               <label>

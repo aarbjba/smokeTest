@@ -94,6 +94,8 @@ server.tool(
     tags: z.array(z.string().max(50)).optional(),
     due_date: z.string().optional()
       .describe('ISO 8601 datetime string, or YYYY-MM-DD (converted to start of day).'),
+    task_type: z.enum(['feature', 'bug', 'chore', 'customer', 'research', 'other']).optional()
+      .describe('Aufgabentyp: feature, bug, chore (maintenance/refactor), customer, research, other (default).'),
     subtasks: z.array(z.string().min(1).max(500)).optional()
       .describe('Titles of subtasks to create under the new todo.'),
   },
@@ -111,6 +113,7 @@ server.tool(
       priority: args.priority ?? 2,
       tags: args.tags ?? [],
       due_date: due,
+      task_type: args.task_type ?? 'other',
     };
     const created = await call<{ id: number }>('/api/todos', {
       method: 'POST',
@@ -144,6 +147,8 @@ server.tool(
     tags: z.array(z.string().max(50)).optional(),
     due_date: z.string().nullable().optional()
       .describe('ISO datetime, YYYY-MM-DD, or null to clear.'),
+    task_type: z.enum(['feature', 'bug', 'chore', 'customer', 'research', 'other']).optional()
+      .describe('Aufgabentyp: feature, bug, chore (maintenance/refactor), customer, research, other.'),
   },
   async ({ id, due_date, ...rest }) => {
     const patch: Record<string, unknown> = { ...rest };

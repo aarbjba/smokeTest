@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import type { Todo } from '../types';
-import { PRIORITY_LABELS, TODO_DRAG_TYPE } from '../types';
+import type { Todo, TaskType } from '../types';
+import { PRIORITY_LABELS, TODO_DRAG_TYPE, TASK_TYPE_LABELS, TASK_TYPE_ICONS } from '../types';
 import { beginCardDrag, endCardDrag, draggingCardId, isCardDragging } from '../stores/dragState';
 import { useTodosStore } from '../stores/todos';
 import { useSelectionStore } from '../stores/selection';
@@ -146,6 +146,12 @@ function sourceBadge(): string {
   if (props.todo.source === 'jira')   return '📋 Jira';
   return '✏️ Eigen';
 }
+
+// Hide the "Sonstiges" chip — it's the default and adds noise on every card.
+// Other types render as a compact icon+label chip in the meta row.
+const taskType = computed<TaskType>(() => (props.todo.task_type ?? 'other') as TaskType);
+const showTypeChip = computed(() => taskType.value !== 'other');
+const typeChipLabel = computed(() => `${TASK_TYPE_ICONS[taskType.value]} ${TASK_TYPE_LABELS[taskType.value]}`);
 </script>
 
 <style scoped>
@@ -229,9 +235,30 @@ function sourceBadge(): string {
   50%      { box-shadow: 0 0 10px 1px color-mix(in srgb, #7a5cff 28%, transparent); }
 }
 
+/* Inline rotating spinner in the title row — companion to the iridescent
+   border. More immediately readable at a glance, especially when the card is
+   scrolled into a dense column. Sized to line-height so it doesn't disrupt
+   baseline alignment. */
+.agent-spinner {
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  flex: 0 0 auto;
+  margin: 0 0.25rem;
+  border: 2px solid color-mix(in srgb, #7a5cff 28%, transparent);
+  border-top-color: #7a5cff;
+  border-radius: 50%;
+  animation: agent-spinner-rotate 0.9s linear infinite;
+  vertical-align: -0.12em;
+}
+@keyframes agent-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .todo-card.agent-working,
-  .todo-card.agent-working::after {
+  .todo-card.agent-working::after,
+  .agent-spinner {
     animation: none;
   }
 }
@@ -303,6 +330,48 @@ function sourceBadge(): string {
   font-size: 0.72rem;
   font-weight: 600;
 }
+
+/* Task-type chip — compact icon+label pill in the meta row. Each variant gets
+   a tint that hints at intent without drowning out the card's own accent.
+   "Sonstiges" isn't rendered (it's the default; showing it would add noise). */
+.task-type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  border-radius: 999px;
+  padding: 0 0.5rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.task-type-chip.task-type-feature {
+  background: color-mix(in srgb, #3b82f6 18%, var(--bg-elev));
+  border-color: color-mix(in srgb, #3b82f6 55%, var(--border));
+  color: color-mix(in srgb, #3b82f6 85%, var(--fg));
+}
+.task-type-chip.task-type-bug {
+  background: color-mix(in srgb, #ef4444 18%, var(--bg-elev));
+  border-color: color-mix(in srgb, #ef4444 55%, var(--border));
+  color: color-mix(in srgb, #ef4444 85%, var(--fg));
+}
+.task-type-chip.task-type-chore {
+  background: color-mix(in srgb, #a3a3a3 18%, var(--bg-elev));
+  border-color: color-mix(in srgb, #a3a3a3 55%, var(--border));
+  color: color-mix(in srgb, #a3a3a3 85%, var(--fg));
+}
+.task-type-chip.task-type-customer {
+  background: color-mix(in srgb, #eab308 18%, var(--bg-elev));
+  border-color: color-mix(in srgb, #eab308 55%, var(--border));
+  color: color-mix(in srgb, #eab308 90%, var(--fg));
+}
+.task-type-chip.task-type-research {
+  background: color-mix(in srgb, #8b5cf6 18%, var(--bg-elev));
+  border-color: color-mix(in srgb, #8b5cf6 55%, var(--border));
+  color: color-mix(in srgb, #8b5cf6 85%, var(--fg));
+}
 </style>
 
 <template>
@@ -356,6 +425,13 @@ function sourceBadge(): string {
         class="writeback-warn"
         :title="`Writeback fehlgeschlagen: ${todo.last_writeback_error}`"
       >⚠️</span>
+      <span
+        v-if="isAgentWorking"
+        class="agent-spinner"
+        role="img"
+        aria-label="Claude arbeitet an diesem Todo"
+        title="Claude arbeitet an diesem Todo"
+      />
       <span class="title-text">{{ todo.title }}</span>
       <span
         v-if="(todo.subtask_total ?? 0) > 0"
@@ -365,6 +441,12 @@ function sourceBadge(): string {
     </div>
     <div class="meta">
       <span class="source-badge">{{ sourceBadge() }}</span>
+      <span
+        v-if="showTypeChip"
+        class="task-type-chip"
+        :class="`task-type-${taskType}`"
+        :title="`Aufgabentyp: ${TASK_TYPE_LABELS[taskType]}`"
+      >{{ typeChipLabel }}</span>
       <span v-if="todo.due_date" class="tag">📅 {{ new Date(todo.due_date).toLocaleDateString() }}</span>
       <span v-for="t in todo.tags.slice(0, 4)" :key="t" class="tag">#{{ t }}</span>
       <span v-if="todo.tags.length > 4" class="tag">+{{ todo.tags.length - 4 }}</span>

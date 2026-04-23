@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useTodosStore } from '../stores/todos';
-import type { SourceFilter } from '../types';
+import type { SourceFilter, TaskType } from '../types';
+import { TASK_TYPE_LABELS, TASK_TYPE_ICONS } from '../types';
 import FilterPicker from './FilterPicker.vue';
 
 const todos = useTodosStore();
@@ -21,10 +22,23 @@ function countFor(id: SourceFilter): number {
 const tagOptions = computed(() => todos.tagsWithCounts);
 const repoOptions = computed(() => todos.reposWithCounts);
 
+// Expose TaskType options as {value, count} with prettified German labels.
+// FilterPicker speaks strings, so we pass the enum slug as value and render
+// "<icon> <label>" in the display. Selection state is likewise enum slugs.
+const typeOptions = computed(() =>
+  todos.typesWithCounts.map((t) => ({
+    value: t.value,
+    label: `${TASK_TYPE_ICONS[t.value]} ${TASK_TYPE_LABELS[t.value]}`,
+    count: t.count,
+  })),
+);
+
 function onToggleTag(tag: string) { todos.toggleTag(tag); }
 function onClearTags() { todos.setActiveTags([]); }
 function onToggleRepo(repo: string) { todos.toggleRepo(repo); }
 function onClearRepos() { todos.setActiveRepos([]); }
+function onToggleType(type: string) { todos.toggleType(type as TaskType); }
+function onClearTypes() { todos.setActiveTypes([]); }
 
 function onResetAll() { todos.clearAllFilters(); }
 </script>
@@ -65,6 +79,17 @@ function onResetAll() { todos.clearAllFilters(); }
       placeholder="Repo suchen…"
       @toggle="onToggleRepo"
       @clear="onClearRepos"
+    />
+
+    <FilterPicker
+      label="Typ"
+      icon="🏗"
+      :options="typeOptions"
+      :selected="todos.activeTypes"
+      empty-text="Keine Typen vorhanden"
+      placeholder="Typ suchen…"
+      @toggle="onToggleType"
+      @clear="onClearTypes"
     />
 
     <button

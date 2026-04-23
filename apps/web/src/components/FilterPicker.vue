@@ -4,6 +4,10 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 interface Option {
   value: string;
   count: number;
+  // Optional display label — falls back to `value` when not provided.
+  // Lets callers keep selection state as a stable enum slug while rendering
+  // a prettified string (icon + German label) in the dropdown.
+  label?: string;
 }
 
 const props = defineProps<{
@@ -28,7 +32,9 @@ const searchInput = ref<HTMLInputElement | null>(null);
 const filtered = computed(() => {
   const q = query.value.trim().toLowerCase();
   if (!q) return props.options;
-  return props.options.filter((o) => o.value.toLowerCase().includes(q));
+  return props.options.filter(
+    (o) => o.value.toLowerCase().includes(q) || (o.label ?? '').toLowerCase().includes(q),
+  );
 });
 
 const selectedSet = computed(() => new Set(props.selected));
@@ -131,7 +137,7 @@ function onClear(ev: Event) {
             :checked="selectedSet.has(opt.value)"
             @change="onToggle(opt.value, $event)"
           />
-          <span class="value" :title="opt.value">{{ opt.value }}</span>
+          <span class="value" :title="opt.label ?? opt.value">{{ opt.label ?? opt.value }}</span>
           <span class="count">{{ opt.count }}</span>
         </label>
       </div>

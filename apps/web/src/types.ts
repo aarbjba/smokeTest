@@ -1,5 +1,7 @@
 export type TodoStatus = 'todo' | 'in_progress' | 'test' | 'done';
 export type TodoSource = 'local' | 'github' | 'jira';
+export type TaskType = 'feature' | 'bug' | 'chore' | 'customer' | 'research' | 'other';
+export type TaskTypeFilter = 'all' | TaskType;
 
 export interface Todo {
   id: number;
@@ -18,6 +20,7 @@ export interface Todo {
   last_writeback_at: string | null;
   position?: number;
   working_directory?: string | null;
+  task_type?: TaskType;
   subtask_total?: number;
   subtask_done?: number;
   subtask_suggested?: number;
@@ -182,6 +185,26 @@ export const SOURCE_ICON: Record<TodoSource, string> = {
   github: '⛓',
   jira: '📋',
 };
+
+export const TASK_TYPE_LABELS: Record<TaskType, string> = {
+  feature: 'Feature',
+  bug: 'Bug',
+  chore: 'Wartung',
+  customer: 'Kunde',
+  research: 'Recherche',
+  other: 'Sonstiges',
+};
+
+export const TASK_TYPE_ICONS: Record<TaskType, string> = {
+  feature: '✨',
+  bug: '🐛',
+  chore: '🧹',
+  customer: '👤',
+  research: '🔍',
+  other: '📌',
+};
+
+export const TASK_TYPES: TaskType[] = ['feature', 'bug', 'chore', 'customer', 'research', 'other'];
 
 // MIME type for our internal card-drag sentinel so board-level drop handlers
 // can distinguish in-app card reorder from external file drops.

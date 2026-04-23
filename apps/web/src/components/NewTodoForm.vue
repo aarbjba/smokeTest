@@ -3,6 +3,8 @@ import { computed, ref } from 'vue';
 import { useTodosStore } from '../stores/todos';
 import { parseQuickAdd } from '../utils/parseQuickAdd';
 import { api } from '../api';
+import type { TaskType } from '../types';
+import { TASK_TYPES, TASK_TYPE_LABELS, TASK_TYPE_ICONS } from '../types';
 
 const todos = useTodosStore();
 const title = ref('');
@@ -10,6 +12,7 @@ const priority = ref<1 | 2 | 3 | 4>(2);
 const tagsText = ref('');
 const dueDate = ref('');
 const description = ref('');
+const taskType = ref<TaskType>('other');
 const saving = ref(false);
 
 // AI reformulation state. Tags + description come back as editable fields the
@@ -123,6 +126,7 @@ async function submit() {
       priority: finalPriority,
       tags: mergedTags,
       due_date: finalDueDate,
+      task_type: taskType.value,
       ...(finalDescription ? { description: finalDescription } : {}),
     });
     // If the AI panel produced subtasks and the user left them checked, persist
@@ -143,6 +147,7 @@ async function submit() {
     dueDate.value = '';
     priority.value = 2;
     description.value = '';
+    taskType.value = 'other';
     aiDescriptionShown.value = false;
     aiSubtasks.value = [];
     aiError.value = null;
@@ -172,6 +177,11 @@ async function submit() {
         <option :value="2">🟡 Normal</option>
         <option :value="3">🟢 Niedrig</option>
         <option :value="4">⚪ Irgendwann</option>
+      </select>
+      <select v-model="taskType" style="max-width: 10rem;" title="Aufgabentyp">
+        <option v-for="t in TASK_TYPES" :key="t" :value="t">
+          {{ TASK_TYPE_ICONS[t] }} {{ TASK_TYPE_LABELS[t] }}
+        </option>
       </select>
       <input v-model="tagsText" type="text" placeholder="tags, komma-getrennt" style="max-width: 16rem;" />
       <input v-model="dueDate" type="date" style="max-width: 10rem;" />

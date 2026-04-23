@@ -2,6 +2,19 @@ import { z } from 'zod';
 
 export const TodoStatus = z.enum(['todo', 'in_progress', 'test', 'done']);
 
+// Aufgabentypen — classifies the nature of the todo. Stored as plain TEXT on
+// todos.task_type; the Zod enum is the single source of truth so the column
+// stays free of CHECK constraints and we can add new types without schema
+// rebuilds. Keep in sync with TASK_TYPE_LABELS in apps/web/src/types.ts.
+export const TaskType = z.enum([
+  'feature',
+  'bug',
+  'chore',
+  'customer',
+  'research',
+  'other',
+]);
+
 export const CreateTodoSchema = z.object({
   title: z.string().min(1).max(500),
   description: z.string().max(10_000).optional().default(''),
@@ -10,6 +23,7 @@ export const CreateTodoSchema = z.object({
   tags: z.array(z.string().max(50)).optional().default([]),
   due_date: z.string().datetime().nullable().optional(),
   working_directory: z.string().max(1000).nullable().optional(),
+  task_type: TaskType.optional().default('other'),
 });
 
 export const UpdateTodoSchema = CreateTodoSchema.partial();

@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia';
 import { api } from '../api';
-import type { Todo, TodoStatus, SourceFilter } from '../types';
+import type { Todo, TodoStatus, SourceFilter, TaskType } from '../types';
 import { useUndoStore } from './undo';
 
 const SOURCE_FILTER_KEY = 'werkbank:source-filter';
 const TAG_FILTER_KEY = 'werkbank:tag-filter';
 const REPO_FILTER_KEY = 'werkbank:repo-filter';
+const TYPE_FILTER_KEY = 'werkbank:type-filter';
 
 function loadJsonArray(key: string): string[] {
   try {
@@ -42,16 +43,18 @@ export const useTodosStore = defineStore('todos', {
     sourceFilter: (localStorage.getItem(SOURCE_FILTER_KEY) as SourceFilter | null) ?? 'all' as SourceFilter,
     activeTags: loadJsonArray(TAG_FILTER_KEY),
     activeRepos: loadJsonArray(REPO_FILTER_KEY),
+    activeTypes: loadJsonArray(TYPE_FILTER_KEY) as TaskType[],
     lastFetchAt: null as number | null,
   }),
   getters: {
-    // Filter chain: status → source → tags → repos → search. AND across dimensions,
+    // Filter chain: status → source → tags → repos → types → search. AND across dimensions,
     // OR within a dimension. Server already orders by (status, position, ...).
     byStatus(state) {
       return (status: TodoStatus) => {
         const q = state.search.toLowerCase();
         const tagSet = new Set(state.activeTags);
         const repoSet = new Set(state.activeRepos);
+        const typeSet = new Set(state.activeTypes);
         return state.items.filter((t) => {
           if (t.status !== status) return false;
           if (state.sourceFilter !== 'all' && t.source !== state.sourceFilter) return false;
@@ -59,6 +62,10 @@ export const useTodosStore = defineStore('todos', {
           if (repoSet.size > 0) {
             const repo = repoOfTodo(t);
             if (!repo || !repoSet.has(repo)) return false;
+          }
+          if (typeSet.size > 0) {
+            const type = (t.task_type ?? 'other') as TaskType;
+            if (!typeSet.has(type)) return false;
           }
           if (q && !(t.title + ' ' + t.description).toLowerCase().includes(q)) return false;
           return true;
@@ -96,11 +103,22 @@ export const useTodosStore = defineStore('todos', {
         .map(([value, count]) => ({ value, count }))
         .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
     },
+    typesWithCounts(state): { value: TaskType; count: number }[] {
+      const counts = new Map<TaskType, number>();
+      for (const t of state.items) {
+        const type = (t.task_type ?? 'other') as TaskType;
+        counts.set(type, (counts.get(type) ?? 0) + 1);
+      }
+      return Array.from(counts.entries())
+        .map(([value, count]) => ({ value, count }))
+        .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+    },
     activeFilterCount(state): number {
       let n = 0;
       if (state.sourceFilter !== 'all') n++;
       n += state.activeTags.length;
       n += state.activeRepos.length;
+      n += state.activeTypes.length;
       if (state.search && state.search.trim() !== '') n++;
       return n;
     },
@@ -130,10 +148,21 @@ export const useTodosStore = defineStore('todos', {
       else this.activeRepos.push(repo);
       localStorage.setItem(REPO_FILTER_KEY, JSON.stringify(this.activeRepos));
     },
+    setActiveTypes(types: TaskType[]) {
+      this.activeTypes = [...types];
+      localStorage.setItem(TYPE_FILTER_KEY, JSON.stringify(this.activeTypes));
+    },
+    toggleType(type: TaskType) {
+      const idx = this.activeTypes.indexOf(type);
+      if (idx >= 0) this.activeTypes.splice(idx, 1);
+      else this.activeTypes.push(type);
+      localStorage.setItem(TYPE_FILTER_KEY, JSON.stringify(this.activeTypes));
+    },
     clearAllFilters() {
       this.setSourceFilter('all');
       this.setActiveTags([]);
       this.setActiveRepos([]);
+      this.setActiveTypes([]);
       this.search = '';
     },
     async fetchAll() {
