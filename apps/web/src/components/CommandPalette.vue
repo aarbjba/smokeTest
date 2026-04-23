@@ -74,6 +74,7 @@ const actions: PaletteAction[] = [
       { id: 'dark', label: 'Dark', icon: '🌒' },
       { id: 'light', label: 'Light', icon: '☀️' },
       { id: 'terminal', label: 'Terminal', icon: '💻' },
+      { id: 'matrix', label: 'Matrix', icon: '🟢' },
     ] as { id: ThemeName; label: string; icon: string }[]
   ).map<PaletteAction>((t) => ({
     id: `theme-${t.id}`,

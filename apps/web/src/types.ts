@@ -113,7 +113,7 @@ export interface RepoMapping {
   updated_at: string;
 }
 
-export type ThemeName = 'workshop' | 'dark' | 'light' | 'terminal';
+export type ThemeName = 'workshop' | 'dark' | 'light' | 'terminal' | 'matrix';
 
 export type AttachmentKind = 'image' | 'video' | 'audio' | 'pdf' | 'text' | 'archive' | 'office' | 'other';
 

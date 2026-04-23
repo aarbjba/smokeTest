@@ -9,6 +9,7 @@ const themes: { id: ThemeName; label: string; icon: string }[] = [
   { id: 'dark',     label: 'Dark',     icon: '🌒' },
   { id: 'light',    label: 'Light',    icon: '☀️' },
   { id: 'terminal', label: 'Terminal', icon: '💻' },
+  { id: 'matrix',   label: 'Matrix',   icon: '🟢' },
 ];
 </script>
 

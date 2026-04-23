@@ -80,3 +80,50 @@ body[data-theme='terminal'] {
   --shadow:       0 0 0 1px rgba(0,255,65,0.25);
   --grain:        repeating-linear-gradient(0deg, rgba(0,255,65,0.03) 0 1px, transparent 1px 3px);
 }
+
+body[data-theme='matrix'] {
+  --bg:          #000000;
+  --bg-elev:    #050a05;
+  --bg-card:    #030803;
+  --fg:          #00ff41;
+  --fg-muted:    #1f9f3a;
+  --accent:      #39ff14;
+  --accent-2:    #00c030;
+  --border:      #0a4010;
+  --danger:      #ff3b3b;
+  --success:     #39ff14;
+  --warning:     #d0ff2a;
+  --font-display: 'Courier New', ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  --font-body:    'Courier New', ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  --font-mono:    'Courier New', ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  --radius:       0;
+  --shadow:       0 0 12px rgba(0,255,65,0.35), 0 0 0 1px rgba(0,255,65,0.45);
+  --grain:        repeating-linear-gradient(0deg, rgba(0,255,65,0.06) 0 1px, transparent 1px 2px);
+}
+
+body[data-theme='matrix'] {
+  text-shadow: 0 0 2px rgba(0,255,65,0.55), 0 0 6px rgba(0,255,65,0.25);
+}
+
+body[data-theme='matrix']::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background:
+    repeating-linear-gradient(0deg, rgba(0,255,65,0.035) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.55) 100%);
+}
+
+body[data-theme='matrix'] input,
+body[data-theme='matrix'] textarea,
+body[data-theme='matrix'] select,
+body[data-theme='matrix'] button {
+  text-shadow: 0 0 2px rgba(0,255,65,0.55);
+}
+
+body[data-theme='matrix'] ::selection {
+  background: rgba(0,255,65,0.35);
+  color: #eaffea;
+}
