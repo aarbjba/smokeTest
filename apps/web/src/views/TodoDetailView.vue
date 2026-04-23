@@ -475,7 +475,14 @@ const tabs = computed(() => [
               <button v-if="isNew" class="ghost" :disabled="saving" @click="router.back()">Abbrechen</button>
               <template v-else>
                 <button class="danger" :disabled="editLocked" @click="remove">🗑 Löschen</button>
-                <GitBranchButton :title="todo.title" :todo-id="todo.id" />
+                <GitBranchButton
+                  :title="todo.title"
+                  :todo-id="todo.id"
+                  :source="todo.source"
+                  :source-ref="todo.source_ref"
+                  :tags="todo.tags"
+                  :task-type="todo.task_type"
+                />
               </template>
             </div>
           </div>
