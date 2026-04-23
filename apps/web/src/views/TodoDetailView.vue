@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed, watch } from 'vue';
+import { onMounted, onUnmounted, ref, computed, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { marked } from 'marked';
 import { api } from '../api';
@@ -35,6 +35,24 @@ const agentActive = ref(false);
 const defaultWorkingDirectory = ref<string>('');
 const savingCwd = ref(false);
 
+// Pre-save subtask drafts — only used while creating a new todo. Get shipped
+// to the server as `subtasks: string[]` in the POST /todos body and inserted
+// atomically alongside the todo itself.
+const newSubtaskDrafts = ref<string[]>([]);
+const subtaskInputRefs = ref<HTMLInputElement[]>([]);
+
+function addSubtaskDraft() {
+  newSubtaskDrafts.value.push('');
+  nextTick(() => {
+    const last = subtaskInputRefs.value[newSubtaskDrafts.value.length - 1];
+    last?.focus();
+  });
+}
+
+function removeSubtaskDraft(idx: number) {
+  newSubtaskDrafts.value.splice(idx, 1);
+}
+
 function emptyTodoDraft(): Todo {
   return {
     id: 0,
@@ -59,7 +77,7 @@ function emptyTodoDraft(): Todo {
 // Tab state — "overview" is the default landing tab. Description, Subtasks and
 // Warteschlange live here because the user asked for them to always be one
 // click away.
-type TabKey = 'overview' | 'material' | 'analyses' | 'pomodoro' | 'mcp';
+type TabKey = 'overview' | 'material' | 'analyses' | 'mcp';
 const activeTab = ref<TabKey>('overview');
 
 // Queue integration.
@@ -278,6 +296,9 @@ async function save() {
   try {
     const tags = tagsText.value.split(',').map((t) => t.trim()).filter(Boolean);
     if (isNew.value) {
+      const subtasks = newSubtaskDrafts.value
+        .map((t) => t.trim())
+        .filter(Boolean);
       const created = await todos.create({
         title: todo.value.title.trim(),
         description: todo.value.description ?? '',
@@ -287,6 +308,7 @@ async function save() {
         due_date: todo.value.due_date,
         working_directory: (todo.value.working_directory ?? '').trim() || null,
         task_type: todo.value.task_type ?? 'other',
+        ...(subtasks.length > 0 ? { subtasks } : {}),
       });
       router.replace(`/todo/${created.id}`);
       return;
@@ -341,14 +363,16 @@ const tabs = computed(() => [
   { key: 'overview' as TabKey, label: '📝 Übersicht', badge: null as number | null },
   { key: 'material' as TabKey, label: '📎 Material', badge: (snippets.value.length + attachmentCount.value) || null },
   { key: 'analyses' as TabKey, label: '🔍 Analysen', badge: analyses.value.length || null },
-  { key: 'pomodoro' as TabKey, label: '🔨 Pomodoro', badge: null },
   { key: 'mcp' as TabKey, label: '⚙️ MCP', badge: null },
 ]);
 </script>
 
 <template>
   <div class="detail">
-    <button class="ghost" @click="router.back()" style="align-self: flex-start;">← Zurück</button>
+    <div class="detail-topbar">
+      <button class="ghost" @click="router.back()">← Zurück</button>
+      <TodoPomodoro v-if="!isNew && todo" :todo-id="todo.id" />
+    </div>
 
     <div v-if="error" class="error-banner">{{ error }}</div>
     <div v-if="loading">Lade…</div>
@@ -457,8 +481,10 @@ const tabs = computed(() => [
           </div>
 
           <!-- In new-mode: a simplified description editor replaces the tab layout.
-               Subtasks/snippets/attachments/analyses/pomodoro/MCP all need a
-               persistent todo id, so they only appear after creation. -->
+               Snippets/attachments/analyses/pomodoro/MCP all need a persistent
+               todo id, so they only appear after creation. Subtasks are the
+               exception: we collect title drafts here and the POST /todos
+               endpoint inserts them in the same transaction. -->
           <div v-if="isNew" class="card description-card">
             <div class="description-head">
               <h3 style="margin: 0;">📝 Beschreibung</h3>
@@ -478,6 +504,36 @@ const tabs = computed(() => [
               v-html="renderedDescription"
             />
             <div v-else class="empty description-preview">Keine Beschreibung.</div>
+          </div>
+
+          <div v-if="isNew" class="card">
+            <h3 style="margin: 0 0 0.75rem 0;">☑ Subtasks (optional)</h3>
+            <ul v-if="newSubtaskDrafts.length > 0" class="new-subtask-list">
+              <li
+                v-for="(_, idx) in newSubtaskDrafts"
+                :key="idx"
+                class="new-subtask-row"
+              >
+                <input
+                  ref="subtaskInputRefs"
+                  v-model="newSubtaskDrafts[idx]"
+                  type="text"
+                  placeholder="Subtask-Titel…"
+                  @keydown.enter.prevent="addSubtaskDraft"
+                />
+                <button
+                  type="button"
+                  class="danger"
+                  @click="removeSubtaskDraft(idx)"
+                  title="Subtask entfernen"
+                >🗑</button>
+              </li>
+            </ul>
+            <div class="new-subtask-add">
+              <button class="primary" type="button" @click="addSubtaskDraft">
+                + Subtask hinzufügen
+              </button>
+            </div>
           </div>
 
           <!-- Tab navigation (only for existing todos) -->
@@ -619,14 +675,6 @@ const tabs = computed(() => [
             </div>
           </div>
 
-          <!-- Tab: Pomodoro -->
-          <div v-if="!isNew && activeTab === 'pomodoro'" class="tab-panel">
-            <div class="card">
-              <h3 style="margin: 0 0 0.75rem 0;">🔨 Pomodoro</h3>
-              <TodoPomodoro :todo-id="todo.id" />
-            </div>
-          </div>
-
           <!-- Tab: MCP -->
           <div v-if="!isNew && activeTab === 'mcp'" class="tab-panel">
             <div class="card">
@@ -652,6 +700,13 @@ const tabs = computed(() => [
 </template>
 
 <style scoped>
+.detail-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-self: stretch;
+}
 .analysis-list {
   list-style: none;
   margin: 0;
@@ -710,5 +765,24 @@ const tabs = computed(() => [
   background: color-mix(in srgb, #3b82f6 12%, var(--bg-elev));
   color: var(--fg);
   font-size: 0.88rem;
+}
+.new-subtask-list {
+  list-style: none;
+  margin: 0 0 0.6rem 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.new-subtask-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.new-subtask-row input {
+  flex: 1;
+}
+.new-subtask-add {
+  display: flex;
 }
 </style>
