@@ -27,7 +27,7 @@ const IS_WINDOWS = process.platform === 'win32';
  * so the child gets its own process group. Falls back to direct PID kill
  * if the group kill fails (e.g. if detached wasn't honored).
  */
-function treeKill(pid: number | undefined): void {
+export function treeKill(pid: number | undefined): void {
   if (!pid) return;
   if (IS_WINDOWS) {
     try {
@@ -329,7 +329,7 @@ interface SnippetLite {
   content: string;
 }
 
-function renderPreprompt(
+export function renderPreprompt(
   todoId: number,
   userPrompt: string,
   mode: AgentMode,
@@ -475,6 +475,95 @@ class SessionStore extends EventEmitter {
     this.spawnProcess(session);
     this.submitTurn(session, renderedPrompt, attachmentIds);
     return session;
+  }
+
+  /**
+   * Register a synthetic session for an externally-produced stream-json pipe
+   * (e.g. `docker logs -f` from a sandbox container running `claude` inside).
+   * No child process is spawned; the caller feeds bytes via `pushExternalStdout`
+   * and closes via `endExternalSession`. Stdout is routed through the exact
+   * same `handleJsonLine` path local sessions use, so the SSE consumer at
+   * `/api/agent/session/:todoId/stream` sees identical `chunk`/`turn-end`/
+   * `end`/`cleared` events regardless of origin.
+   */
+  registerExternalSession(
+    todoId: number,
+    { cwd, prompt }: { cwd: string; prompt: string },
+  ): ClaudeSession {
+    if (this.sessions.has(todoId)) {
+      throw Object.assign(new Error('Session already exists for this todo.'), { status: 409 });
+    }
+    const session: ClaudeSession = {
+      todoId,
+      status: 'running',
+      turnActive: true,
+      output: '',
+      turns: [
+        {
+          index: 1,
+          prompt,
+          output: '',
+          startedAt: Date.now(),
+          endedAt: null,
+          result: null,
+        },
+      ],
+      sessionId: null,
+      startedAt: Date.now(),
+      endedAt: null,
+      exitCode: null,
+      errorMessage: null,
+      cwd,
+      prompt,
+    };
+    this.sessions.set(todoId, session);
+    this.stdoutBuffers.set(todoId, '');
+    return session;
+  }
+
+  /**
+   * Append stdout bytes from an external stream into the session's buffer and
+   * flush whole lines through the stream-json parser. No-op if the session is
+   * unknown (e.g. cleared mid-flight).
+   */
+  pushExternalStdout(todoId: number, chunk: string): void {
+    const session = this.sessions.get(todoId);
+    if (!session) return;
+    const prev = this.stdoutBuffers.get(todoId) ?? '';
+    this.stdoutBuffers.set(todoId, prev + chunk);
+    this.flushStdoutBuffer(session, false);
+  }
+
+  /**
+   * Close an external session. Flushes any trailing partial line, stamps the
+   * last turn, sets status, and emits `end` — the same event the SSE consumer
+   * already handles. `statusOverride` lets the caller mark e.g. a timeout
+   * while preserving the container's actual exitCode for forensics.
+   */
+  endExternalSession(
+    todoId: number,
+    {
+      exitCode,
+      errorMessage,
+      statusOverride,
+    }: { exitCode: number | null; errorMessage: string | null; statusOverride?: 'exited' | 'error' },
+  ): void {
+    const session = this.sessions.get(todoId);
+    if (!session) return;
+    this.flushStdoutBuffer(session, true);
+    this.stdoutBuffers.delete(todoId);
+    session.turnActive = false;
+    session.status = statusOverride ?? (exitCode === 0 ? 'exited' : 'error');
+    session.endedAt = Date.now();
+    session.exitCode = exitCode;
+    session.errorMessage = errorMessage;
+    const lastTurn = session.turns[session.turns.length - 1];
+    if (lastTurn && lastTurn.endedAt === null) {
+      lastTurn.endedAt = session.endedAt;
+      if (lastTurn.result === null) lastTurn.result = exitCode === 0 ? 'success' : 'error';
+    }
+    if (session.sessionId) persistSessionId(todoId, session.sessionId);
+    this.emit('end', todoId, session);
   }
 
   send(todoId: number, prompt: string, attachmentIds: number[] = []): ClaudeSession {
