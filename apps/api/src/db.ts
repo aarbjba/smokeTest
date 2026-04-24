@@ -166,6 +166,30 @@ export function initDb() {
   // prompts. JSON array of strings; NULL or '[]' means "none". Used by the
   // agent-panel path picker to show recently-used paths as quick chips.
   addColumnIfMissing('todos', 'saved_paths', 'TEXT');
+  // Sandbox columns — per-todo overrides for the "In Sandbox starten" flow.
+  // All nullable. Runtime state (sandbox_status, sandbox_pr_url) is validated
+  // by Zod (SandboxStatusEnum), mirroring task_type's constraint-less column.
+  addColumnIfMissing('todos', 'branch_name', 'TEXT');
+  addColumnIfMissing('todos', 'base_branch', 'TEXT');
+  addColumnIfMissing('todos', 'test_command', 'TEXT');
+  addColumnIfMissing('todos', 'sandbox_status', 'TEXT');
+  addColumnIfMissing('todos', 'sandbox_pr_url', 'TEXT');
+  addColumnIfMissing('todos', 'sandbox_timeout_min', 'INTEGER');
+  addColumnIfMissing('todos', 'sandbox_max_turns', 'INTEGER');
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_todos_sandbox_status ON todos(sandbox_status)`);
+  // Sandbox default settings. Stored as JSON (parsed via JSON.parse throughout
+  // — see claude-sessions.ts:296) so numbers stay numbers and strings keep
+  // their quotes. INSERT OR IGNORE so user edits survive restart.
+  const insertSetting = db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`);
+  insertSetting.run('sandbox.max_concurrent', '3');
+  insertSetting.run('sandbox.image_tag', '"werkbank-sandbox:latest"');
+  insertSetting.run('sandbox.docker_context', '"lp03"');
+  insertSetting.run('sandbox.werkbank_public_url', '""');
+  insertSetting.run('sandbox.default_timeout_min', '30');
+  insertSetting.run('sandbox.default_max_turns', '40');
+  insertSetting.run('sandbox.claude_model', '"claude-sonnet-4-5"');
+  insertSetting.run('sandbox.git_author_name', '"claude-bot"');
+  insertSetting.run('sandbox.git_author_email', '"claude-bot@users.noreply.github.com"');
   // Seed positions for existing rows so ordering is stable.
   db.exec(`
     UPDATE todos SET position = id WHERE position = 0;
