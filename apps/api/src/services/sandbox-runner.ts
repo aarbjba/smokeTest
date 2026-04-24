@@ -85,6 +85,7 @@ interface TodoRow {
   test_command: string | null;
   sandbox_timeout_min: number | null;
   sandbox_max_turns: number | null;
+  sandbox_repo: string | null;
   working_directory: string | null;
   task_type: string | null;
   tags: string | null;
@@ -94,7 +95,7 @@ function loadTodo(todoId: number): TodoRow {
   const row = db
     .prepare(
       `SELECT id, title, source, source_ref, source_url, branch_name, base_branch,
-              test_command, sandbox_timeout_min, sandbox_max_turns,
+              test_command, sandbox_timeout_min, sandbox_max_turns, sandbox_repo,
               working_directory, task_type, tags
          FROM todos WHERE id = ? AND deleted_at IS NULL`,
     )
@@ -112,14 +113,23 @@ function loadTodo(todoId: number): TodoRow {
  * only supports GitHub because the entrypoint opens a GitHub PR.
  */
 function resolveRepoUrl(todo: TodoRow): string {
-  if (todo.source !== 'github') {
-    throw Object.assign(new Error('Sandbox requires a GitHub source todo'), { status: 400 });
+  // Prefer the user-assigned sandbox_repo. Locally-created todos with no
+  // GitHub sync origin can still be sandboxed by picking a target repo in
+  // the detail view; the runner uses that over source_ref.
+  if (todo.sandbox_repo && todo.sandbox_repo.includes('/')) {
+    return `https://github.com/${todo.sandbox_repo}.git`;
   }
-  const ref = (todo.source_ref ?? '').split('#')[0];
-  if (!ref || !ref.includes('/')) {
+  if (todo.source === 'github') {
+    const ref = (todo.source_ref ?? '').split('#')[0];
+    if (ref && ref.includes('/')) {
+      return `https://github.com/${ref}.git`;
+    }
     throw Object.assign(new Error(`Invalid GitHub source_ref: ${todo.source_ref}`), { status: 400 });
   }
-  return `https://github.com/${ref}.git`;
+  throw Object.assign(
+    new Error('Sandbox requires either a GitHub source todo or a sandbox_repo assignment'),
+    { status: 400 },
+  );
 }
 
 /** Decrypt the stored GitHub PAT. Throws 400 if not configured. */

@@ -276,6 +276,7 @@ todosRouter.patch('/:id', async (req, res) => {
     test_command: string | null;
     sandbox_timeout_min: number | null;
     sandbox_max_turns: number | null;
+    sandbox_repo: string | null;
   };
   const mergedSavedPaths = patch.saved_paths !== undefined
     ? (patch.saved_paths === null ? null : JSON.stringify(patch.saved_paths))
@@ -296,6 +297,7 @@ todosRouter.patch('/:id', async (req, res) => {
     test_command: patch.test_command !== undefined ? patch.test_command : existingRaw.test_command,
     sandbox_timeout_min: patch.sandbox_timeout_min !== undefined ? patch.sandbox_timeout_min : existingRaw.sandbox_timeout_min,
     sandbox_max_turns: patch.sandbox_max_turns !== undefined ? patch.sandbox_max_turns : existingRaw.sandbox_max_turns,
+    sandbox_repo: patch.sandbox_repo !== undefined ? patch.sandbox_repo : existingRaw.sandbox_repo,
   };
   db.prepare(
     `UPDATE todos SET title=@title, description=@description, status=@status, priority=@priority,
@@ -303,6 +305,7 @@ todosRouter.patch('/:id', async (req, res) => {
      preprompt=@preprompt, saved_paths=@saved_paths,
      branch_name=@branch_name, base_branch=@base_branch, test_command=@test_command,
      sandbox_timeout_min=@sandbox_timeout_min, sandbox_max_turns=@sandbox_max_turns,
+     sandbox_repo=@sandbox_repo,
      updated_at=datetime('now') WHERE id=@id`
   ).run({ ...merged, id });
 

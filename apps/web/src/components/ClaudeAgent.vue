@@ -104,8 +104,9 @@ const canSend = computed(() => running.value && !turnActive.value && followup.va
 
 // ─── Sandbox run state ──────────────────────────────────────────────────────
 // One sandbox run per todo at a time (M2 enforces this server-side). The UI
-// gate keeps the button disabled until the user has both a linked GitHub
-// source_ref AND a configured github PAT — the server will 400 otherwise.
+// gate keeps the button disabled until the todo has a GitHub repo association
+// (either from sync via source_ref or user-assigned via sandbox_repo) AND a
+// configured github PAT — the server will 400 otherwise.
 const githubIntegration = ref<Integration | null>(null);
 const sandboxBusy = ref(false);
 
@@ -114,18 +115,19 @@ const sandboxRunning = computed(() =>
   sandboxStatus.value === 'queued' || sandboxStatus.value === 'running',
 );
 const hasGithubToken = computed(() => !!githubIntegration.value?.hasToken);
-const canSandbox = computed(
+const hasRepoAssignment = computed(
   () =>
-    canRun.value &&
-    !!props.todo.source_ref &&
-    props.todo.source === 'github' &&
-    hasGithubToken.value,
+    (props.todo.source === 'github' && !!props.todo.source_ref) ||
+    !!props.todo.sandbox_repo,
+);
+const canSandbox = computed(
+  () => canRun.value && hasRepoAssignment.value && hasGithubToken.value,
 );
 const sandboxTooltip = computed(() => {
-  if (!props.todo.source_ref || props.todo.source !== 'github') {
-    return 'Sandbox benötigt ein verknüpftes GitHub-Repo';
+  if (!hasRepoAssignment.value) {
+    return 'Sandbox benötigt ein verknüpftes GitHub-Repo (oder eine Sandbox-Repo-Zuweisung in der Detail-Ansicht)';
   }
-  if (!hasGithubToken.value) return 'Sandbox benötigt ein verknüpftes GitHub-Repo';
+  if (!hasGithubToken.value) return 'GitHub-Token fehlt (Einstellungen → Verbindungen)';
   return '';
 });
 

@@ -49,6 +49,10 @@ export interface Todo {
   sandbox_pr_url?: string | null;
   sandbox_timeout_min?: number | null;
   sandbox_max_turns?: number | null;
+  // User-assigned target repo (`owner/name`) for sandboxing locally-created
+  // todos that don't have a GitHub source_ref. Wins over source_ref in
+  // resolveRepoUrl.
+  sandbox_repo?: string | null;
 }
 
 export type SandboxStatus =

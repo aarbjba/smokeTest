@@ -176,6 +176,11 @@ export function initDb() {
   addColumnIfMissing('todos', 'sandbox_pr_url', 'TEXT');
   addColumnIfMissing('todos', 'sandbox_timeout_min', 'INTEGER');
   addColumnIfMissing('todos', 'sandbox_max_turns', 'INTEGER');
+  // User-assignable sandbox target repo for locally-created todos that have
+  // no source_ref. Format is `owner/name` (no #suffix). When set, wins over
+  // source_ref in resolveRepoUrl so the user can sandbox a locally-created
+  // todo against any configured GitHub repo.
+  addColumnIfMissing('todos', 'sandbox_repo', 'TEXT');
   db.exec(`CREATE INDEX IF NOT EXISTS idx_todos_sandbox_status ON todos(sandbox_status)`);
   // Sandbox default settings. Stored as JSON (parsed via JSON.parse throughout
   // — see claude-sessions.ts:296) so numbers stay numbers and strings keep

@@ -3,7 +3,7 @@ import { onMounted, onUnmounted, ref, computed, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { marked } from 'marked';
 import { api } from '../api';
-import type { Todo, Snippet, TodoStatus, Analysis, TaskType, SandboxStatus } from '../types';
+import type { Todo, Snippet, TodoStatus, Analysis, TaskType, SandboxStatus, Integration, GitHubConfig } from '../types';
 import { STATUS_LABELS, STATUS_ICONS, TASK_TYPE_LABELS, TASK_TYPE_ICONS, TASK_TYPES, SANDBOX_STATUS_LABELS, SANDBOX_STATUS_COLOR } from '../types';
 import { computeAgentBranchName } from '../utils/branchName';
 import { useTodosStore } from '../stores/todos';
@@ -500,6 +500,26 @@ function onSandboxMaxTurnsBlur(ev: FocusEvent) {
   const n = Math.max(1, Math.min(80, Number(raw)));
   if (Number.isFinite(n)) void saveSandboxField('sandbox_max_turns', n);
 }
+function onSandboxRepoChange(ev: Event) {
+  const value = (ev.target as HTMLSelectElement).value;
+  void saveSandboxField('sandbox_repo', value || null);
+}
+
+// Configured GitHub repos — populated from the GitHub integration so the user
+// can pick a sandbox target for locally-created todos that don't have a
+// source_ref from a GitHub sync.
+const configuredGithubRepos = ref<string[]>([]);
+async function loadConfiguredGithubRepos() {
+  try {
+    const list: Integration[] = await api.integrations.list();
+    const gh = list.find((i) => i.provider === 'github');
+    const cfg = gh?.config as GitHubConfig | undefined;
+    configuredGithubRepos.value = cfg?.repos ?? [];
+  } catch {
+    configuredGithubRepos.value = [];
+  }
+}
+onMounted(loadConfiguredGithubRepos);
 
 // Tab list driving the nav. Order matches the visual order of the tabs.
 const tabs = computed(() => [
@@ -932,6 +952,22 @@ const tabs = computed(() => [
                 rel="noopener"
                 class="sandbox-pr-link"
               >Draft-PR öffnen →</a>
+
+              <label class="stacked" v-if="todo.source !== 'github' || !todo.source_ref">
+                <span>
+                  GitHub-Repo
+                  <span v-if="configuredGithubRepos.length === 0" style="color: var(--fg-muted); font-weight: normal;"> — keine Repos in den Einstellungen konfiguriert</span>
+                </span>
+                <select
+                  :value="todo.sandbox_repo ?? ''"
+                  :disabled="sandboxRunning || configuredGithubRepos.length === 0"
+                  style="font-family: var(--font-mono); font-size: 0.85rem;"
+                  @change="onSandboxRepoChange"
+                >
+                  <option value="">— nicht zugewiesen —</option>
+                  <option v-for="r in configuredGithubRepos" :key="r" :value="r">{{ r }}</option>
+                </select>
+              </label>
 
               <label class="stacked">
                 <span>Branch-Name</span>

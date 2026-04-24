@@ -40,6 +40,10 @@ export const CreateTodoSchema = z.object({
   test_command: z.string().max(500).nullable().optional(),
   sandbox_timeout_min: z.number().int().min(1).max(240).nullable().optional(),
   sandbox_max_turns: z.number().int().min(1).max(200).nullable().optional(),
+  // Repo assignment for locally-created todos (no GitHub source_ref).
+  // Format `owner/name`; validated shallowly here and more strictly in the
+  // runner. Max 200 mirrors source_ref.
+  sandbox_repo: z.string().max(200).regex(/^[^\s/]+\/[^\s/]+$/, 'must be owner/name').nullable().optional(),
 });
 
 export const UpdateTodoSchema = CreateTodoSchema.partial();
