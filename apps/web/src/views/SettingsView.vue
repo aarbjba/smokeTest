@@ -417,14 +417,123 @@ function resetPreprompt() {
   preprompt.value = DEFAULT_PREPROMPT;
 }
 
+// ─── Sandbox (remote container runner) ──────────────────────────────────────
+// Eight persisted keys under `sandbox.*` — each saves on blur so the user
+// doesn't have to hunt for a save button. Two action buttons: reach-test
+// (sanity check werkbank_public_url from inside the sandbox) and image
+// rebuild (streams `docker build` output into a live <pre>). Token-scope
+// check is intentionally NOT shipped — M2 did not provide the endpoint.
+
+const sandbox = ref({
+  docker_context: '',
+  werkbank_public_url: '',
+  max_concurrent: 3,
+  default_timeout_min: 30,
+  default_max_turns: 40,
+  claude_model: 'claude-sonnet-4-5',
+  git_author_name: 'claude-bot',
+  git_author_email: 'claude-bot@users.noreply.github.com',
+});
+
+const sandboxBusy = ref(false);
+const sandboxBuildLog = ref('');
+const sandboxBuildActive = ref(false);
+
+async function loadSandboxSettings() {
+  try {
+    const all = await api.settings.getAll();
+    sandbox.value = {
+      docker_context: (all['sandbox.docker_context'] as string) ?? 'lp03',
+      werkbank_public_url: (all['sandbox.werkbank_public_url'] as string) ?? '',
+      max_concurrent: (all['sandbox.max_concurrent'] as number) ?? 3,
+      default_timeout_min: (all['sandbox.default_timeout_min'] as number) ?? 30,
+      default_max_turns: (all['sandbox.default_max_turns'] as number) ?? 40,
+      claude_model: (all['sandbox.claude_model'] as string) ?? 'claude-sonnet-4-5',
+      git_author_name: (all['sandbox.git_author_name'] as string) ?? 'claude-bot',
+      git_author_email: (all['sandbox.git_author_email'] as string)
+        ?? 'claude-bot@users.noreply.github.com',
+    };
+  } catch (e) {
+    flashMsg('err', e instanceof Error ? e.message : String(e));
+  }
+}
+onMounted(loadSandboxSettings);
+
+async function saveSandboxKey(key: keyof typeof sandbox.value) {
+  try {
+    await api.settings.set(`sandbox.${key}`, sandbox.value[key]);
+  } catch (e) {
+    flashMsg('err', e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function testSandboxConnection() {
+  sandboxBusy.value = true;
+  try {
+    const r = await api.sandbox.testConnection();
+    if (r.ok && r.werkbankReachable) {
+      flashMsg('ok', `Werkbank vom Sandbox-Host erreichbar. ${r.detail}`);
+    } else if (!r.werkbankReachable) {
+      flashMsg('err', `Werkbank vom lp03 aus nicht erreichbar — ${r.detail}`);
+    } else {
+      flashMsg('err', `Sandbox-Container auf lp03 konnte nicht gestartet werden — ${r.detail}`);
+    }
+  } catch (e) {
+    flashMsg('err', e instanceof Error ? e.message : String(e));
+  } finally {
+    sandboxBusy.value = false;
+  }
+}
+
+async function rebuildSandboxImage() {
+  if (sandboxBuildActive.value) return;
+  sandboxBuildActive.value = true;
+  sandboxBuildLog.value = '';
+  try {
+    await api.sandbox.rebuildImage(
+      (text) => { sandboxBuildLog.value += text; },
+      (result) => {
+        sandboxBuildActive.value = false;
+        if (result.ok) {
+          flashMsg('ok', `Image gebaut: ${result.imageTag ?? '(kein Tag)'}`);
+        } else {
+          flashMsg('err', `Build fehlgeschlagen: ${result.error ?? 'unbekannter Fehler'}`);
+        }
+      },
+    );
+  } catch (e) {
+    sandboxBuildActive.value = false;
+    flashMsg('err', e instanceof Error ? e.message : String(e));
+  }
+}
+
+// Firewall whitelist preview — the sandbox runner restricts outbound network
+// traffic to these hosts plus the configured werkbank_public_url. Read-only
+// in the UI because the list is wired into docker/sandbox/Dockerfile +
+// iptables rules on lp03; changing it here would just mislead.
+const sandboxWhitelist = computed<string[]>(() => {
+  const base = ['github.com', 'api.github.com', 'api.anthropic.com', 'registry.npmjs.org', 'statsig.com'];
+  const extra = sandbox.value.werkbank_public_url.trim();
+  if (extra) {
+    try {
+      const host = new URL(extra).host;
+      if (host && !base.includes(host)) base.push(host);
+    } catch {
+      base.push(extra);
+    }
+  }
+  return base;
+});
+
 // ─── Tab navigation ─────────────────────────────────────────────────────────
-type TabId = 'connections' | 'repos' | 'recurrences' | 'agent';
+type TabId = 'connections' | 'repos' | 'recurrences' | 'agent' | 'sandbox';
 const activeTab = ref<TabId>('connections');
 const tabs: { id: TabId; label: string }[] = [
   { id: 'connections', label: '🔌 Verbindungen' },
   { id: 'repos', label: '📁 Repo-Pfade' },
   { id: 'recurrences', label: '🔁 Wiederkehrend' },
   { id: 'agent', label: '🤖 Agent' },
+  { id: 'sandbox', label: '🐳 Sandbox' },
 ];
 </script>
 
@@ -717,6 +826,139 @@ const tabs: { id: TabId; label: string }[] = [
       </div>
     </section>
 
+    <section v-show="!loading && activeTab === 'sandbox'" style="margin-top: 1.5rem;">
+      <h3>🐳 Sandbox</h3>
+      <p style="color: var(--fg-muted); font-size: 0.85rem; margin-top: 0.25rem;">
+        Konfiguration für den Remote-Sandbox-Runner auf lp03. Einstellungen speichern beim Verlassen des Felds.
+      </p>
+
+      <div class="sandbox-grid">
+        <label class="stacked">
+          <span>Docker-Context</span>
+          <input
+            v-model="sandbox.docker_context"
+            type="text"
+            spellcheck="false"
+            placeholder="lp03"
+            style="font-family: var(--font-mono);"
+            @blur="saveSandboxKey('docker_context')"
+            @keydown.enter.prevent="saveSandboxKey('docker_context')"
+          />
+        </label>
+        <label class="stacked">
+          <span>Werkbank-URL (aus Sandbox erreichbar)</span>
+          <input
+            v-model="sandbox.werkbank_public_url"
+            type="url"
+            spellcheck="false"
+            placeholder="http://lp03:3001"
+            style="font-family: var(--font-mono);"
+            @blur="saveSandboxKey('werkbank_public_url')"
+            @keydown.enter.prevent="saveSandboxKey('werkbank_public_url')"
+          />
+        </label>
+        <label class="stacked">
+          <span>Max. parallele Runs</span>
+          <input
+            v-model.number="sandbox.max_concurrent"
+            type="number"
+            min="1"
+            max="10"
+            @blur="saveSandboxKey('max_concurrent')"
+            @keydown.enter.prevent="saveSandboxKey('max_concurrent')"
+          />
+        </label>
+        <label class="stacked">
+          <span>Standard-Timeout (Minuten)</span>
+          <input
+            v-model.number="sandbox.default_timeout_min"
+            type="number"
+            min="1"
+            max="120"
+            @blur="saveSandboxKey('default_timeout_min')"
+            @keydown.enter.prevent="saveSandboxKey('default_timeout_min')"
+          />
+        </label>
+        <label class="stacked">
+          <span>Standard Max. Turns</span>
+          <input
+            v-model.number="sandbox.default_max_turns"
+            type="number"
+            min="1"
+            max="80"
+            @blur="saveSandboxKey('default_max_turns')"
+            @keydown.enter.prevent="saveSandboxKey('default_max_turns')"
+          />
+        </label>
+        <label class="stacked">
+          <span>Claude-Model</span>
+          <input
+            v-model="sandbox.claude_model"
+            type="text"
+            spellcheck="false"
+            placeholder="claude-sonnet-4-5"
+            style="font-family: var(--font-mono);"
+            @blur="saveSandboxKey('claude_model')"
+            @keydown.enter.prevent="saveSandboxKey('claude_model')"
+          />
+        </label>
+        <label class="stacked">
+          <span>Git-Author Name</span>
+          <input
+            v-model="sandbox.git_author_name"
+            type="text"
+            spellcheck="false"
+            placeholder="claude-bot"
+            @blur="saveSandboxKey('git_author_name')"
+            @keydown.enter.prevent="saveSandboxKey('git_author_name')"
+          />
+        </label>
+        <label class="stacked">
+          <span>Git-Author E-Mail</span>
+          <input
+            v-model="sandbox.git_author_email"
+            type="email"
+            spellcheck="false"
+            placeholder="claude-bot@users.noreply.github.com"
+            @blur="saveSandboxKey('git_author_email')"
+            @keydown.enter.prevent="saveSandboxKey('git_author_email')"
+          />
+        </label>
+      </div>
+
+      <div class="row" style="margin-top: 1rem; gap: 0.5rem; flex-wrap: wrap;">
+        <button
+          class="primary"
+          :disabled="sandboxBusy"
+          @click="testSandboxConnection"
+          title="Startet einen Throwaway-Container auf lp03 und probiert, die Werkbank-URL zu erreichen"
+        >🔌 Erreichbarkeit testen</button>
+        <button
+          class="ghost"
+          :disabled="sandboxBuildActive"
+          @click="rebuildSandboxImage"
+          title="Baut das Sandbox-Image auf lp03 neu; Log-Ausgabe streamt unten"
+        >🐳 Sandbox-Image neu bauen</button>
+      </div>
+
+      <pre
+        v-if="sandboxBuildLog || sandboxBuildActive"
+        class="sandbox-build-log"
+      >{{ sandboxBuildLog || '(warte auf Build-Output…)' }}</pre>
+
+      <div style="margin-top: 1rem;">
+        <h4 style="margin: 0 0 0.25rem 0; font-family: var(--font-display);">Firewall-Whitelist (nur Lesen)</h4>
+        <p style="color: var(--fg-muted); font-size: 0.8rem; margin: 0 0 0.5rem 0;">
+          Ausgehender Traffic im Sandbox-Container ist auf diese Hosts beschränkt.
+        </p>
+        <ul class="sandbox-whitelist">
+          <li v-for="host in sandboxWhitelist" :key="host">
+            <code>{{ host }}</code>
+          </li>
+        </ul>
+      </div>
+    </section>
+
     <p style="color: var(--fg-muted); font-size: 0.85rem; margin-top: 1.5rem;">
       Tokens werden AES-256-GCM-verschlüsselt in SQLite abgelegt und verlassen das Backend nie. Im Frontend erscheinen sie nur maskiert.
     </p>
@@ -771,5 +1013,42 @@ const tabs: { id: TabId; label: string }[] = [
   background: var(--bg-elev);
   border-color: var(--accent-2);
 }
+
+.sandbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+.sandbox-build-log {
+  margin: 0.75rem 0 0 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.sandbox-whitelist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.sandbox-whitelist li {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.8rem;
+}
+.sandbox-whitelist code { background: transparent; }
 
 </style>
