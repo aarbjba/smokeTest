@@ -238,9 +238,11 @@ Beschreibung:
 `;
 
 // Analyse-mode template: read-only understanding pass, produces an analysis +
-// suggested subtasks. Does NOT implement or finalize.
+// subtasks. Collects confirmed info + open questions as subtasks with
+// descriptions, and parks the todo in Pendliste (status='pending') when key
+// info is missing.
 // Placeholders: {{todo_id}}, {{todo_title}}, {{todo_description}}, {{todo_status}},
-//               {{subtasks}}, {{snippets}}
+//               {{subtasks}}, {{snippets}}, {{sandbox_repo}}, {{working_directory}}
 const ANALYSE_PREPROMPT = `Du arbeitest im **Analyse-Modus** an einer Aufgabe aus der Werkbank. Ziel: die Aufgabe verstehen, strukturiert analysieren und Umsetzungsschritte vorschlagen. Du setzt selbst nichts um und veränderst keinen Code.
 
 ## Aktuelle Aufgabe
@@ -251,19 +253,27 @@ Status: {{todo_status}}
 Beschreibung:
 {{todo_description}}
 
+## Repo-Kontext
+Sandbox-Repo: {{sandbox_repo}}
+Working directory: {{working_directory}}
+
 ## Bestehende Subtasks
 {{subtasks}}
 {{snippets}}
 ## Ablauf
-1. Sichte Titel, Beschreibung, bestehende Subtasks und angehängte Dateien (falls übergeben).
+1. Sichte Titel, Beschreibung, bestehende Subtasks und angehängte Dateien (falls übergeben). Wenn ein working directory gesetzt ist, sichte die relevanten Dateien im Repo (Read/Grep/Glob).
 2. Verfasse eine strukturierte Analyse in Markdown mit folgenden Abschnitten:
    - **Ziel**: Was will der User wirklich erreichen?
    - **Vorgehen**: Wie lässt sich das umsetzen? Skizziere 2–3 Optionen falls relevant.
    - **Risiken / offene Fragen**: Was ist unklar? Wo drohen Probleme?
    - **Komplexität**: Grobe Einschätzung (klein / mittel / groß) mit Begründung.
 3. Speichere die Analyse mit mcp__werkbank__add_analysis (genau einmal pro Durchlauf).
-4. Schlage für jeden konkreten Umsetzungsschritt, der als Subtask sinnvoll wäre, einen Eintrag via mcp__werkbank__suggest_subtask vor. Dupliziere keine Subtasks, die oben bereits gelistet sind.
-5. Beende danach. Rufe NICHT mcp__werkbank__finalize_todo auf — die Aufgabe ist nicht erledigt, sie ist analysiert.
+4. Erzeuge Subtasks in folgenden Varianten — dupliziere keine Subtasks, die oben bereits gelistet sind:
+   - **Gesammelte Fakten** (z.B. relevanter Dateipfad, Funktion, Constraint, Edge Case, den du im Repo gefunden hast): nutze \`mcp__werkbank__add_subtask\` mit \`title\` = kurzer Fakt, \`description\` = Fundstelle/Kontext (Dateipfad:Zeile, Auszug, Warum relevant). Das sind gesicherte Infos, keine Vorschläge — abgehakt stehen sie als Referenz zur Verfügung.
+   - **Umsetzungsschritte** (geplanter Handgriff, den Claude im Work-Modus ausführen würde): nutze \`mcp__werkbank__suggest_subtask\` mit \`title\` + optionaler \`description\`. Diese erscheinen dem User als Vorschläge mit Annehmen/Ablehnen.
+   - **Offene Fragen an den User** (Infos, die du NICHT aus Repo/Beschreibung beantworten kannst): nutze \`mcp__werkbank__add_subtask\` mit \`title\` = \`[?] <Kurzfrage>\`, \`description\` = ausführlichere Erläuterung, warum die Info gebraucht wird und was der User liefern soll.
+5. Wenn nach Schritt 4 **offene Fragen** existieren, die eine seriöse Umsetzung blockieren, rufe \`mcp__werkbank__update_todo\` auf mit \`status="pending"\`. Das parkt die Aufgabe in der Pendliste. Sonst lass den Status unverändert.
+6. Beende danach. Rufe NICHT mcp__werkbank__finalize_todo auf — die Aufgabe ist nicht erledigt, sie ist analysiert.
 `;
 
 // Sandbox-mode template: runs inside an ephemeral container on lp03 that
@@ -336,6 +346,8 @@ interface TodoLite {
   title: string;
   description: string;
   status: string;
+  sandbox_repo: string | null;
+  working_directory: string | null;
 }
 
 interface SubtaskLite {
@@ -367,7 +379,7 @@ export function renderPreprompt(
 ): string {
   const template = getPreprompt(mode, todoId);
   const todo = db.prepare(
-    `SELECT id, title, description, status FROM todos WHERE id = ?`,
+    `SELECT id, title, description, status, sandbox_repo, working_directory FROM todos WHERE id = ?`,
   ).get(todoId) as TodoLite | undefined;
   if (!todo) return userPrompt; // fallback if todo gone — don't wrap.
 
@@ -423,6 +435,9 @@ export function renderPreprompt(
     }
   }
 
+  const sandboxRepoStr = todo.sandbox_repo?.trim() ? todo.sandbox_repo : '(nicht gesetzt)';
+  const workingDirStr = todo.working_directory?.trim() ? todo.working_directory : '(nicht gesetzt)';
+
   return template
     .replace(/\{\{todo_id\}\}/g, String(todo.id))
     .replace(/\{\{todo_title\}\}/g, todo.title)
@@ -431,6 +446,8 @@ export function renderPreprompt(
     .replace(/\{\{subtasks\}\}/g, subtasksStr)
     .replace(/\{\{snippets\}\}/g, snippetsBlock)
     .replace(/\{\{analyses\}\}/g, analysesBlock)
+    .replace(/\{\{sandbox_repo\}\}/g, sandboxRepoStr)
+    .replace(/\{\{working_directory\}\}/g, workingDirStr)
     .replace(/\{\{user_prompt\}\}/g, userPrompt);
 }
 

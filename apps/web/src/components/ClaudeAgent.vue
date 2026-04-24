@@ -289,6 +289,73 @@ async function loadGithubIntegration() {
   }
 }
 
+// ─── Repo picker ────────────────────────────────────────────────────────────
+// Surfaces a dropdown with all repos the user has either configured in the
+// GitHub integration OR already assigned to another todo (deduped). Lets the
+// analyse-agent target a repo the todo isn't synced from. Writes to
+// todo.sandbox_repo via the store — same field the sandbox runner consumes.
+const repoBusy = ref(false);
+const repoMenuOpen = ref(false);
+const repoCustomDraft = ref('');
+
+const availableRepos = computed<string[]>(() => {
+  const set = new Set<string>();
+  // Configured GitHub repos (canonical list).
+  const cfg = githubIntegration.value?.config as { repos?: string[] } | undefined;
+  for (const r of cfg?.repos ?? []) {
+    if (typeof r === 'string' && r.trim()) set.add(r.trim());
+  }
+  // Any other repo the user has manually assigned to another todo.
+  for (const t of todosStore.items) {
+    if (t.sandbox_repo && t.sandbox_repo.trim()) set.add(t.sandbox_repo.trim());
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+});
+
+const sourceDerivedRepo = computed<string | null>(() => {
+  if (props.todo.source !== 'github' || !props.todo.source_ref) return null;
+  // source_ref format: "owner/repo#issue-NN" — strip the #suffix.
+  const hash = props.todo.source_ref.indexOf('#');
+  return hash >= 0 ? props.todo.source_ref.slice(0, hash) : props.todo.source_ref;
+});
+
+const activeRepo = computed(() => props.todo.sandbox_repo ?? sourceDerivedRepo.value ?? null);
+
+function formatRepoLabel(repo: string | null): string {
+  return repo?.trim() ? repo : '— kein Repo gewählt —';
+}
+
+async function setSandboxRepo(repo: string | null) {
+  if (repoBusy.value) return;
+  const trimmed = repo?.trim() ?? '';
+  // No-op if it matches the current override.
+  if ((props.todo.sandbox_repo ?? '') === trimmed) {
+    repoMenuOpen.value = false;
+    return;
+  }
+  repoBusy.value = true;
+  try {
+    await todosStore.update(props.todo.id, { sandbox_repo: trimmed || null });
+    repoMenuOpen.value = false;
+    repoCustomDraft.value = '';
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    repoBusy.value = false;
+  }
+}
+
+async function applyCustomRepo() {
+  const v = repoCustomDraft.value.trim();
+  if (!v) return;
+  // Shallow validation mirrors the server (owner/name, no spaces).
+  if (!/^[^\s/]+\/[^\s/]+$/.test(v)) {
+    error.value = 'Repo muss im Format owner/name sein.';
+    return;
+  }
+  await setSandboxRepo(v);
+}
+
 onMounted(async () => {
   try {
     const settings = await api.settings.getAll();
@@ -872,6 +939,68 @@ const statusBadge = computed(() => {
       </div>
     </div>
 
+    <!-- Repo picker — shown before any turn has started. Sets todos.sandbox_repo
+         so the analyse preprompt can tell Claude which repo to read. -->
+    <div
+      v-if="!running && turnCount === 0"
+      class="repo-picker"
+      :class="{ open: repoMenuOpen }"
+      style="margin-top: 0.75rem;"
+    >
+      <div class="row" style="gap: 0.4rem; align-items: baseline; flex-wrap: wrap;">
+        <span class="repo-picker-label">🗂 Repo:</span>
+        <button
+          type="button"
+          class="ghost repo-picker-button"
+          :disabled="repoBusy"
+          :title="activeRepo ?? 'Kein Repo gewählt. Der Analyse-Agent hat ohne Repo-Kontext weniger Einblick.'"
+          @click="repoMenuOpen = !repoMenuOpen"
+        >
+          <span>{{ formatRepoLabel(activeRepo) }}</span>
+          <span style="margin-left: 0.3rem;">{{ repoMenuOpen ? '▴' : '▾' }}</span>
+        </button>
+        <span
+          v-if="!activeRepo"
+          style="font-size: 0.72rem; color: var(--fg-muted);"
+        >→ Analyse-Agent hat ohne Repo nur Titel/Beschreibung als Kontext</span>
+      </div>
+      <div v-if="repoMenuOpen" class="repo-picker-menu">
+        <button
+          v-for="r in availableRepos"
+          :key="r"
+          type="button"
+          class="ghost repo-picker-item"
+          :class="{ active: r === activeRepo }"
+          :disabled="repoBusy"
+          @click="setSandboxRepo(r)"
+        >{{ r }}</button>
+        <div v-if="availableRepos.length === 0" class="repo-picker-empty">
+          Noch keine Repos hinterlegt. Trage unten ein Repo im Format <code>owner/name</code> ein.
+        </div>
+        <form class="repo-picker-custom" @submit.prevent="applyCustomRepo">
+          <input
+            v-model="repoCustomDraft"
+            type="text"
+            placeholder="owner/name"
+            :disabled="repoBusy"
+          />
+          <button
+            type="submit"
+            class="ghost"
+            :disabled="repoBusy || !repoCustomDraft.trim()"
+          >+ Zuweisen</button>
+        </form>
+        <button
+          v-if="props.todo.sandbox_repo"
+          type="button"
+          class="ghost"
+          :disabled="repoBusy"
+          style="font-size: 0.78rem;"
+          @click="setSandboxRepo(null)"
+        >✕ Zuweisung entfernen</button>
+      </div>
+    </div>
+
     <label v-if="!running && turnCount === 0" class="stacked" style="margin-top: 0.75rem;">
       <span class="row" style="justify-content: space-between; align-items: baseline;">
         <span>Erste Nachricht</span>
@@ -1062,5 +1191,59 @@ const statusBadge = computed(() => {
   border: 1px dashed var(--border);
   border-radius: var(--radius);
   padding: 0.25rem 0.4rem;
+}
+.repo-picker {
+  position: relative;
+  display: block;
+}
+.repo-picker-label {
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+}
+.repo-picker-button {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  min-width: 14rem;
+  text-align: left;
+  display: inline-flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.repo-picker-menu {
+  margin-top: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  padding: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-width: 28rem;
+}
+.repo-picker-item {
+  justify-content: flex-start;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  text-align: left;
+}
+.repo-picker-item.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.repo-picker-empty {
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  padding: 0.25rem 0.35rem;
+}
+.repo-picker-custom {
+  display: flex;
+  gap: 0.3rem;
+  margin-top: 0.25rem;
+}
+.repo-picker-custom input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
 }
 </style>
