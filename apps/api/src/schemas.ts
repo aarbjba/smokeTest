@@ -160,3 +160,30 @@ export const UpdateQueueItemSchema = z.object({
 export const ReorderQueueSchema = z.object({
   ordered_ids: z.array(z.number().int().positive()),
 });
+
+// Sandbox "In Sandbox starten" — launches a hardened container on lp03 that
+// clones the repo, runs Claude autonomously, and opens a draft PR on success.
+// sandbox_status is written by the runner; validation happens in Zod (same
+// constraint-less-column pattern as task_type) so new states don't need a
+// schema rebuild.
+export const SandboxStatusEnum = z.enum([
+  'idle',
+  'queued',
+  'running',
+  'pushed',
+  'failed',
+  'no_test',
+  'no_changes',
+]);
+
+export const SandboxStartSchema = z.object({
+  prompt: z.string().min(1).max(50_000),
+  attachmentIds: z.array(z.number().int().positive()).max(100).optional().default([]),
+  includeAnalyses: z.boolean().optional(),
+  includeSnippets: z.boolean().optional(),
+  branchName: z.string().min(1).max(200).optional(),
+  baseBranch: z.string().min(1).max(200).optional(),
+  testCommand: z.string().max(500).nullable().optional(),
+  maxTurns: z.number().int().min(1).max(200).optional(),
+  timeoutMin: z.number().int().min(1).max(240).optional(),
+});
