@@ -528,12 +528,17 @@ const tabs = computed(() => [
   { key: 'analyses' as TabKey, label: '🔍 Analysen', badge: analyses.value.length || null },
   { key: 'mcp' as TabKey, label: '⚙️ MCP', badge: null },
 ]);
+
+function handlePrint() {
+  window.print();
+}
 </script>
 
 <template>
   <div class="detail">
     <div class="detail-topbar">
-      <button class="ghost" @click="router.back()">← Zurück</button>
+      <button class="ghost no-print" @click="router.back()">← Zurück</button>
+      <button v-if="!isNew && todo" class="ghost no-print" @click="handlePrint" title="Seite drucken">🖨️ Drucken</button>
       <TodoPomodoro v-if="!isNew && todo" :todo-id="todo.id" />
     </div>
 
@@ -722,7 +727,7 @@ const tabs = computed(() => [
           </nav>
 
           <!-- Tab: Übersicht -->
-          <div v-if="!isNew && activeTab === 'overview'" class="tab-panel">
+          <div v-show="!isNew && activeTab === 'overview'" class="tab-panel" data-tab="overview">
             <div class="card description-card">
               <div class="description-head">
                 <h3 style="margin: 0;">📝 Beschreibung</h3>
@@ -860,7 +865,7 @@ const tabs = computed(() => [
           </div>
 
           <!-- Tab: Material — Attachments + Snippets -->
-          <div v-if="!isNew && activeTab === 'material'" class="tab-panel">
+          <div v-show="!isNew && activeTab === 'material'" class="tab-panel" data-tab="material">
             <div class="card">
               <AttachmentPanel :todo-id="todo.id" />
             </div>
@@ -884,7 +889,7 @@ const tabs = computed(() => [
           </div>
 
           <!-- Tab: Analysen -->
-          <div v-if="!isNew && activeTab === 'analyses'" class="tab-panel">
+          <div v-show="!isNew && activeTab === 'analyses'" class="tab-panel" data-tab="analyses">
             <div class="card">
               <h3 style="margin: 0 0 0.75rem 0;">🔍 Analysen</h3>
               <p v-if="analyses.length === 0" class="empty" style="margin: 0;">
@@ -910,7 +915,7 @@ const tabs = computed(() => [
           </div>
 
           <!-- Tab: MCP -->
-          <div v-if="!isNew && activeTab === 'mcp'" class="tab-panel">
+          <div v-show="!isNew && activeTab === 'mcp'" class="tab-panel" data-tab="mcp">
             <div class="card">
               <McpServersPanel :todo-id="todo.id" />
             </div>

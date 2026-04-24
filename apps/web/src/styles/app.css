@@ -925,3 +925,412 @@ label.stacked { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0
 @media (max-width: 700px) {
   .board { grid-template-columns: 1fr; }
 }
+
+/* Print Styles */
+@media print {
+  /* Reset page margins for better control */
+  @page {
+    margin: 1.5cm;
+    size: A4;
+  }
+
+  /* Hide interactive elements and navigation */
+  .topbar,
+  .detail-topbar,
+  .no-print,
+  button,
+  .pomodoro,
+  .detail-side,
+  .detail-tabs,
+  .claude-agent,
+  .sandbox-section,
+  .new-todo-card,
+  .filter-bar,
+  .filter-picker,
+  .command-palette,
+  .theme-switcher,
+  .saved-views-bar,
+  .queue-strip,
+  input[type="file"],
+  .attachment-popover,
+  .path-picker,
+  .viewer-backdrop,
+  .agent-badge,
+  .actions-row button,
+  .done-check {
+    display: none !important;
+  }
+
+  /* Keep only essential action buttons visible */
+  .actions-row {
+    display: none !important;
+  }
+
+  /* Show body without background textures */
+  body {
+    background: white !important;
+    background-image: none !important;
+    color: black !important;
+  }
+
+  /* Reset all backgrounds for ink efficiency */
+  * {
+    background: white !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  /* Reset colors for print */
+  .detail,
+  .detail .card,
+  .tab-panel,
+  .description-card,
+  .snippet,
+  .attachment-item,
+  .analysis-item {
+    background: white !important;
+    border: 1px solid #ccc !important;
+    color: black !important;
+    page-break-inside: avoid;
+  }
+
+  /* Make all text black for readability */
+  h1, h2, h3, h4, h5, h6,
+  p, span, div, label, input, textarea, select,
+  .detail-header .title-row input[type="text"] {
+    color: black !important;
+    background: transparent !important;
+  }
+
+  /* Keep borders subtle but visible */
+  .card {
+    border: 1px solid #999 !important;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  /* Detail grid: single column for print */
+  .detail-grid {
+    display: block !important;
+  }
+
+  .detail-main {
+    width: 100%;
+  }
+
+  /* Show all tab content at once - override v-show */
+  .tab-panel[data-tab] {
+    display: block !important;
+  }
+
+  /* Add section headers for each tab */
+  .tab-panel[data-tab]:before {
+    content: attr(data-tab);
+    display: block;
+    font-size: 1.3rem;
+    font-weight: bold;
+    margin: 1.5rem 0 1rem 0;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid #333;
+    text-transform: capitalize;
+  }
+
+  .tab-panel[data-tab="overview"]:before {
+    content: "Übersicht";
+  }
+
+  .tab-panel[data-tab="material"]:before {
+    content: "Material (Snippets & Anhänge)";
+  }
+
+  .tab-panel[data-tab="analyses"]:before {
+    content: "Analysen";
+  }
+
+  .tab-panel[data-tab="mcp"]:before {
+    content: "MCP Server";
+  }
+
+  /* Title styling */
+  .detail-header .title-row {
+    font-size: 1.5rem;
+    font-weight: bold;
+    margin-bottom: 1rem;
+    border-bottom: 2px solid #333;
+    padding-bottom: 0.5rem;
+  }
+
+  .detail-header .title-row .status-icon {
+    display: inline;
+  }
+
+  /* Meta grid: readable layout */
+  .detail-header .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+    margin: 1rem 0;
+    font-size: 0.9rem;
+  }
+
+  .detail-header .meta-grid label {
+    display: block;
+    margin-bottom: 0.5rem;
+  }
+
+  .detail-header .meta-grid label span {
+    font-weight: bold;
+    display: block;
+    margin-bottom: 0.2rem;
+  }
+
+  .detail-header .meta-grid input,
+  .detail-header .meta-grid select {
+    border: none !important;
+    padding: 0 !important;
+    font-size: 0.9rem;
+  }
+
+  /* Source row */
+  .detail-header .source-row {
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+  }
+
+  .detail-header .source-row .tag {
+    border: 1px solid #666 !important;
+    padding: 0.2rem 0.5rem;
+    border-radius: 3px;
+    display: inline-block;
+    margin-right: 0.5rem;
+  }
+
+  .detail-header .source-row a {
+    color: #000 !important;
+    text-decoration: underline;
+  }
+
+  /* Description section */
+  .description-card {
+    page-break-inside: avoid;
+    margin-bottom: 1rem;
+  }
+
+  .description-card h3 {
+    font-size: 1.2rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid #666;
+    padding-bottom: 0.3rem;
+  }
+
+  .description-card textarea,
+  .description-preview {
+    border: none !important;
+    padding: 0.5rem 0;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    min-height: auto !important;
+  }
+
+  .description-preview img {
+    max-width: 100%;
+    height: auto;
+    page-break-inside: avoid;
+  }
+
+  /* Subtasks */
+  .subtask-list {
+    list-style: none;
+    padding: 0;
+  }
+
+  .subtask-item {
+    padding: 0.3rem 0;
+    border-bottom: 1px solid #ddd !important;
+  }
+
+  .subtask-item:before {
+    content: "☐ ";
+    margin-right: 0.5rem;
+  }
+
+  .subtask-item.done:before {
+    content: "☑ ";
+  }
+
+  /* Snippets */
+  .snippet-grid {
+    display: block !important;
+  }
+
+  .snippet {
+    border: 1px solid #999 !important;
+    padding: 0.75rem;
+    margin-bottom: 1rem;
+    page-break-inside: avoid;
+  }
+
+  .snippet .head {
+    margin-bottom: 0.5rem;
+    font-weight: bold;
+  }
+
+  .snippet textarea,
+  .snippet .preview {
+    border: 1px solid #ddd !important;
+    padding: 0.5rem;
+    font-family: monospace;
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+
+  /* Attachments */
+  .attachment-list {
+    display: block !important;
+  }
+
+  .attachment-item {
+    border: 1px solid #999 !important;
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+    display: block !important;
+  }
+
+  .attachment-item .a-icon {
+    display: inline;
+    margin-right: 0.5rem;
+  }
+
+  .attachment-item .a-name {
+    font-weight: bold;
+  }
+
+  .attachment-item .a-sub {
+    font-size: 0.85rem;
+    color: #666 !important;
+    margin-top: 0.3rem;
+  }
+
+  .attachment-item .a-actions {
+    display: none !important;
+  }
+
+  /* Analyses */
+  .analysis-list {
+    list-style: none;
+    padding: 0;
+  }
+
+  .analysis-item {
+    border: 1px solid #999 !important;
+    padding: 0.75rem;
+    margin-bottom: 1rem;
+    page-break-inside: avoid;
+  }
+
+  .analysis-header {
+    margin-bottom: 0.5rem;
+    font-weight: bold;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 0.3rem;
+  }
+
+  .analysis-time {
+    font-size: 0.85rem;
+    color: #666 !important;
+  }
+
+  .analysis-body {
+    font-size: 0.95rem;
+    line-height: 1.6;
+  }
+
+  /* Tags */
+  .tag {
+    border: 1px solid #666 !important;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.85rem;
+  }
+
+  /* Prevent page breaks in critical sections */
+  .detail-header,
+  .description-card,
+  .snippet,
+  .attachment-item,
+  .analysis-item {
+    page-break-inside: avoid;
+  }
+
+  /* Add page breaks before major sections */
+  .card {
+    page-break-before: auto;
+  }
+
+  /* Typography improvements for print */
+  body {
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+
+  h1 { font-size: 18pt; }
+  h2 { font-size: 16pt; }
+  h3 { font-size: 14pt; }
+  h4 { font-size: 12pt; }
+
+  /* Links: show URL after link text */
+  a[href]:after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    color: #666 !important;
+  }
+
+  /* Don't show URLs for internal links and attachments */
+  a[href^="#"]:after,
+  a[href^="/api/"]:after {
+    content: "";
+  }
+
+  /* Code blocks */
+  pre, code {
+    background: #f5f5f5 !important;
+    border: 1px solid #ddd !important;
+    padding: 0.5rem;
+    font-family: monospace;
+    font-size: 0.9em;
+    page-break-inside: avoid;
+  }
+
+  code {
+    padding: 0.1rem 0.3rem;
+  }
+
+  /* Tables */
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    page-break-inside: avoid;
+  }
+
+  th, td {
+    border: 1px solid #999 !important;
+    padding: 0.5rem;
+    text-align: left;
+  }
+
+  th {
+    background: #f0f0f0 !important;
+    font-weight: bold;
+  }
+
+  /* Remove unnecessary spacing */
+  .detail {
+    padding: 0;
+    margin: 0;
+  }
+
+  main.content {
+    padding: 0;
+  }
+}
