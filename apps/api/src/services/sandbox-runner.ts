@@ -241,10 +241,14 @@ export async function startSandboxRun(
 
   const effective = computeEffective(todo, opts);
 
+  // 'sandbox' mode strips the werkbank-MCP workflow instructions that the
+  // default 'work' preprompt injects. The container has no network path to
+  // the werkbank MCP server, so those references only confuse Claude. The
+  // docker entrypoint prepends its own sandbox-specific rules on top.
   const renderedPrompt = renderPreprompt(
     todoId,
     prompt,
-    'work',
+    'sandbox',
     opts.includeAnalyses ?? false,
     opts.includeSnippets ?? false,
   );

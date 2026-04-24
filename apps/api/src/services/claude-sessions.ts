@@ -266,12 +266,31 @@ Beschreibung:
 5. Beende danach. Rufe NICHT mcp__werkbank__finalize_todo auf — die Aufgabe ist nicht erledigt, sie ist analysiert.
 `;
 
-export type AgentMode = 'work' | 'analyse';
+// Sandbox-mode template: runs inside an ephemeral container on lp03 that
+// has no network path to the werkbank MCP server. Any mcp__werkbank__*
+// reference would send Claude chasing tools that don't exist in this
+// context. The docker entrypoint (docker/sandbox/agent-entrypoint.sh)
+// prepends its own "do not push / do not PR" preamble on top of this, so
+// this template only provides task context — no workflow rules.
+const SANDBOX_PREPROMPT = `## Aktuelle Aufgabe
+Titel: {{todo_title}}
+
+Beschreibung:
+{{todo_description}}
+
+## Bestehende Subtasks
+{{subtasks}}
+{{snippets}}{{analyses}}
+## User-Prompt
+{{user_prompt}}
+`;
+
+export type AgentMode = 'work' | 'analyse' | 'sandbox';
 
 function getPreprompt(mode: AgentMode, todoId: number): string {
   // Per-todo override takes precedence over the global setting. Only applied
-  // to work mode — analyse mode has its own structured template that users
-  // rarely customize per-todo.
+  // to work mode — analyse and sandbox modes have their own structured
+  // templates that users rarely customize per-todo.
   if (mode === 'work') {
     try {
       const row = db
@@ -290,6 +309,16 @@ function getPreprompt(mode: AgentMode, todoId: number): string {
       return typeof parsed === 'string' && parsed.trim() ? parsed : ANALYSE_PREPROMPT;
     } catch {
       return ANALYSE_PREPROMPT;
+    }
+  }
+  if (mode === 'sandbox') {
+    try {
+      const row = db.prepare(`SELECT value FROM settings WHERE key = 'agent.sandbox_preprompt'`).get() as { value: string } | undefined;
+      if (!row) return SANDBOX_PREPROMPT;
+      const parsed = JSON.parse(row.value);
+      return typeof parsed === 'string' && parsed.trim() ? parsed : SANDBOX_PREPROMPT;
+    } catch {
+      return SANDBOX_PREPROMPT;
     }
   }
   try {
