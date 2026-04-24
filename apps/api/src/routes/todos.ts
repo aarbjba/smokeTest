@@ -271,6 +271,11 @@ todosRouter.patch('/:id', async (req, res) => {
     task_type: string | null;
     preprompt: string | null;
     saved_paths: string | null;
+    branch_name: string | null;
+    base_branch: string | null;
+    test_command: string | null;
+    sandbox_timeout_min: number | null;
+    sandbox_max_turns: number | null;
   };
   const mergedSavedPaths = patch.saved_paths !== undefined
     ? (patch.saved_paths === null ? null : JSON.stringify(patch.saved_paths))
@@ -286,11 +291,18 @@ todosRouter.patch('/:id', async (req, res) => {
     task_type: patch.task_type ?? existingRaw.task_type ?? 'other',
     preprompt: patch.preprompt !== undefined ? patch.preprompt : existingRaw.preprompt,
     saved_paths: mergedSavedPaths,
+    branch_name: patch.branch_name !== undefined ? patch.branch_name : existingRaw.branch_name,
+    base_branch: patch.base_branch !== undefined ? patch.base_branch : existingRaw.base_branch,
+    test_command: patch.test_command !== undefined ? patch.test_command : existingRaw.test_command,
+    sandbox_timeout_min: patch.sandbox_timeout_min !== undefined ? patch.sandbox_timeout_min : existingRaw.sandbox_timeout_min,
+    sandbox_max_turns: patch.sandbox_max_turns !== undefined ? patch.sandbox_max_turns : existingRaw.sandbox_max_turns,
   };
   db.prepare(
     `UPDATE todos SET title=@title, description=@description, status=@status, priority=@priority,
      tags=@tags, due_date=@due_date, working_directory=@working_directory, task_type=@task_type,
      preprompt=@preprompt, saved_paths=@saved_paths,
+     branch_name=@branch_name, base_branch=@base_branch, test_command=@test_command,
+     sandbox_timeout_min=@sandbox_timeout_min, sandbox_max_turns=@sandbox_max_turns,
      updated_at=datetime('now') WHERE id=@id`
   ).run({ ...merged, id });
 

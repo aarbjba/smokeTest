@@ -31,6 +31,15 @@ export const CreateTodoSchema = z.object({
   // Paths relative to working_directory that the user has recently inserted
   // via `@` syntax in the agent prompt. Capped at 200 entries.
   saved_paths: z.array(z.string().max(1000)).max(200).nullable().optional(),
+  // Sandbox per-todo overrides. NULL clears the override so the global
+  // setting (sandbox.default_*) applies at run time. `sandbox_status` and
+  // `sandbox_pr_url` are written by the runner only — intentionally not
+  // exposed here so the UI can't forge run state.
+  branch_name: z.string().max(200).nullable().optional(),
+  base_branch: z.string().max(200).nullable().optional(),
+  test_command: z.string().max(500).nullable().optional(),
+  sandbox_timeout_min: z.number().int().min(1).max(240).nullable().optional(),
+  sandbox_max_turns: z.number().int().min(1).max(200).nullable().optional(),
 });
 
 export const UpdateTodoSchema = CreateTodoSchema.partial();
