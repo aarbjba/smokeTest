@@ -864,6 +864,61 @@ label.stacked { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0
 }
 .viewer-nopreview .big-icon { font-size: 4rem; }
 
+/* Sandbox status chip — used on TodoCard's meta row AND in the detail view
+   header. Base plus five state modifiers, all sourced from the existing
+   theme palette so the chip reads correctly on workshop / dark / light /
+   terminal / matrix. No hard-coded hex.
+
+   Note: themes.css defines --warning (not --warn); the `.warn` button class
+   refers to that same var. 'no_test' uses --warning intentionally because
+   the runner emits it as "please investigate" rather than an error. */
+.sandbox-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  border-radius: 999px;
+  padding: 0 0.5rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.sandbox-chip-idle {
+  color: var(--fg-muted);
+  border-color: var(--border);
+}
+.sandbox-chip-queued {
+  background: color-mix(in srgb, var(--accent-2) 18%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--accent-2) 55%, var(--border));
+  color: color-mix(in srgb, var(--accent-2) 90%, var(--fg));
+}
+.sandbox-chip-running {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: color-mix(in srgb, var(--accent) 90%, var(--fg));
+  animation: blink 1.6s infinite;
+}
+.sandbox-chip-pushed {
+  background: color-mix(in srgb, var(--success) 18%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--success) 55%, var(--border));
+  color: color-mix(in srgb, var(--success) 90%, var(--fg));
+}
+.sandbox-chip-failed {
+  background: color-mix(in srgb, var(--danger) 18%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+  color: color-mix(in srgb, var(--danger) 90%, var(--fg));
+}
+.sandbox-chip-no_test {
+  background: color-mix(in srgb, var(--warning) 18%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--warning) 55%, var(--border));
+  color: color-mix(in srgb, var(--warning) 90%, var(--fg));
+}
+@media (prefers-reduced-motion: reduce) {
+  .sandbox-chip-running { animation: none; }
+}
+
 @media (max-width: 1200px) {
   .board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
