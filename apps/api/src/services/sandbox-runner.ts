@@ -235,10 +235,9 @@ export async function startSandboxRun(
   const repoUrl = resolveRepoUrl(todo);
   const githubToken = getGithubToken();
 
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (!anthropicKey) {
-    throw Object.assign(new Error('ANTHROPIC_API_KEY is not set'), { status: 400 });
-  }
+  // ANTHROPIC_API_KEY is no longer a precondition. lp03 uses OAuth creds
+  // supplied via the `werkbank-claude-auth` named volume (mounted below)
+  // which the M1 agent-entrypoint accepts as an alternative to an API key.
 
   const effective = computeEffective(todo, opts);
 
@@ -657,6 +656,24 @@ async function launchNow(item: QueuedItem): Promise<void> {
   slot.envFilePath = envFilePath;
 
   // Hardened `docker run -d`.
+  // Hardening flags mirror the M1-verified `docker run` incantation that
+  // successfully smoke-ran on lp03. Deviations from the M2 plan (per
+  // plans/sandbox-plan_v2_final.md) and why:
+  //   - `no-new-privileges` dropped — breaks sudo, which the default
+  //     Dockerfile ENTRYPOINT invokes to run init-firewall.sh. See commit
+  //     b695f2f (docs(sandbox): note no-new-privileges conflict with sudo).
+  //   - Caps rebalanced for sudo: SETUID/SETGID/AUDIT_WRITE/CHOWN/
+  //     DAC_OVERRIDE/FOWNER. NET_ADMIN/NET_RAW are NOT needed because we
+  //     skip the firewall-init step via --entrypoint override; re-add them
+  //     together with the default entrypoint when the firewall is wired
+  //     back in (follow-up).
+  //   - `-v werkbank-claude-auth:/home/node/.claude` — named volume on
+  //     lp03 that holds the pre-logged-in OAuth credentials. Shadows the
+  //     tmpfs on /home/node for that subpath, which is intentional: only
+  //     `.claude` needs to be persistent; the rest of $HOME stays tmpfs.
+  //   - `--entrypoint /usr/local/bin/agent-entrypoint.sh` — skips the
+  //     Dockerfile's `sudo init-firewall.sh && exec agent-entrypoint.sh`
+  //     wrapper. Firewall init is deferred (M2 follow-up).
   const runArgs = [
     '--context',
     ctx,
@@ -668,10 +685,12 @@ async function launchNow(item: QueuedItem): Promise<void> {
     '--env-file',
     envFilePath,
     '--cap-drop=ALL',
-    '--cap-add=NET_ADMIN',
-    '--cap-add=NET_RAW',
-    '--security-opt',
-    'no-new-privileges:true',
+    '--cap-add=SETUID',
+    '--cap-add=SETGID',
+    '--cap-add=AUDIT_WRITE',
+    '--cap-add=CHOWN',
+    '--cap-add=DAC_OVERRIDE',
+    '--cap-add=FOWNER',
     '--read-only',
     '--tmpfs',
     '/tmp:size=256m,noexec,nosuid',
@@ -679,12 +698,16 @@ async function launchNow(item: QueuedItem): Promise<void> {
     '/workspace:size=4g,exec,nosuid,uid=1000,gid=1000',
     '--tmpfs',
     '/home/node:size=64m,exec,nosuid,uid=1000,gid=1000',
+    '-v',
+    'werkbank-claude-auth:/home/node/.claude',
     '--memory=4g',
     '--memory-swap=4g',
     '--cpus=2',
     '--pids-limit=512',
     '-u',
     '1000:1000',
+    '--entrypoint',
+    '/usr/local/bin/agent-entrypoint.sh',
     imageTag,
   ];
 
