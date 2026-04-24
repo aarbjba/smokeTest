@@ -38,7 +38,59 @@ export interface Todo {
   // Relative to working_directory. Frontend keeps them in insertion order
   // (most recent last) and caps at ~20 for the quick-chip UI.
   saved_paths?: string[] | null;
+  // ─── Remote-sandbox columns (M2) ─────────────────────────────────────────
+  // Overrides for the sandbox run plus its current lifecycle state and the
+  // draft PR URL once the run finishes. Columns are optional because they
+  // only exist after the M2 migration and are always nullable server-side.
+  branch_name?: string | null;
+  base_branch?: string | null;
+  test_command?: string | null;
+  sandbox_status?: SandboxStatus | null;
+  sandbox_pr_url?: string | null;
+  sandbox_timeout_min?: number | null;
+  sandbox_max_turns?: number | null;
 }
+
+export type SandboxStatus =
+  | 'idle'
+  | 'queued'
+  | 'running'
+  | 'pushed'
+  | 'failed'
+  | 'no_test';
+
+export interface SandboxRun {
+  todoId: number;
+  runId: string;
+  containerName: string;
+  startedAt: number;
+  state: 'running' | 'queued';
+  branch: string;
+  baseBranch: string;
+  timeoutMin: number;
+}
+
+export const SANDBOX_STATUS_LABELS: Record<SandboxStatus, string> = {
+  idle: 'Leerlauf',
+  queued: 'In Warteschlange',
+  running: 'Läuft…',
+  pushed: 'Gepusht',
+  failed: 'Fehlgeschlagen',
+  no_test: 'Keine Tests',
+};
+
+// Maps a sandbox status to a CSS custom property (existing palette). The
+// chip component consumes these via `color: var(…)` + `border-color: var(…)`.
+// `--warning` exists across all themes; `--warn` does not (the button class
+// `.warn` is the name, but themes define `--warning`).
+export const SANDBOX_STATUS_COLOR: Record<SandboxStatus, string> = {
+  idle: '--fg-muted',
+  queued: '--accent-2',
+  running: '--accent',
+  pushed: '--success',
+  failed: '--danger',
+  no_test: '--warning',
+};
 
 export interface QueueItem {
   todo_id: number;
