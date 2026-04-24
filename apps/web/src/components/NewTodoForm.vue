@@ -20,7 +20,7 @@ const saving = ref(false);
 // The whole AI panel is cleared on successful submit.
 const aiLoading = ref(false);
 const aiError = ref<string | null>(null);
-const aiSubtasks = ref<Array<{ title: string; accepted: boolean }>>([]);
+const aiSubtasks = ref<Array<{ title: string; description: string; accepted: boolean; showDescription: boolean }>>([]);
 const aiDescriptionShown = ref(false);
 
 async function reformulateWithAI() {
@@ -46,7 +46,14 @@ async function reformulateWithAI() {
       if (!description.value.trim()) description.value = result.description;
       aiDescriptionShown.value = true;
     }
-    aiSubtasks.value = result.subtasks.map((s) => ({ title: s, accepted: true }));
+    aiSubtasks.value = result.subtasks.map((s) => ({
+      title: s.title,
+      description: s.description ?? '',
+      accepted: true,
+      // Expand the detail panel immediately when Haiku returned notes for the
+      // step — otherwise the extra context is invisible until the user pokes.
+      showDescription: !!s.description?.trim(),
+    }));
   } catch (e) {
     aiError.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -136,7 +143,12 @@ async function submit() {
     if (created && accepted.length > 0) {
       try {
         for (const s of accepted) {
-          await api.subtasks.create(created.id, s.title.trim());
+          const desc = s.description.trim();
+          await api.subtasks.create(
+            created.id,
+            s.title.trim(),
+            desc ? { description: desc } : {},
+          );
         }
       } catch (e) {
         aiError.value = e instanceof Error ? e.message : String(e);
@@ -222,8 +234,8 @@ async function submit() {
         <button type="button" class="ghost" @click="aiSubtasks = []" title="Vorschläge verwerfen">✕</button>
       </div>
       <ul>
-        <li v-for="(s, i) in aiSubtasks" :key="i">
-          <label>
+        <li v-for="(s, i) in aiSubtasks" :key="i" class="ai-subtask-row">
+          <label class="ai-subtask-main">
             <input type="checkbox" v-model="s.accepted" />
             <input
               type="text"
@@ -231,7 +243,22 @@ async function submit() {
               class="ai-subtask-input"
               :disabled="!s.accepted"
             />
+            <button
+              type="button"
+              class="ghost ai-subtask-toggle"
+              :title="s.showDescription ? 'Beschreibung ausblenden' : 'Beschreibung bearbeiten'"
+              :disabled="!s.accepted"
+              @click="s.showDescription = !s.showDescription"
+            >{{ s.showDescription ? '▾' : '▸' }}</button>
           </label>
+          <textarea
+            v-if="s.showDescription"
+            v-model="s.description"
+            class="ai-subtask-desc"
+            rows="2"
+            placeholder="Beschreibung / Kontext zum Schritt (optional)"
+            :disabled="!s.accepted"
+          />
         </li>
       </ul>
     </div>
@@ -364,7 +391,12 @@ async function submit() {
   flex-direction: column;
   gap: 0.3rem;
 }
-.ai-subtasks li label {
+.ai-subtask-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.ai-subtask-main {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -373,5 +405,19 @@ async function submit() {
   flex: 1;
   min-width: 0;
   font-size: 0.9rem;
+}
+.ai-subtask-toggle {
+  padding: 0.2rem 0.4rem;
+  line-height: 1;
+  font-size: 0.8rem;
+}
+.ai-subtask-desc {
+  margin-left: 1.75rem;
+  width: calc(100% - 1.75rem);
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: var(--fg-muted);
 }
 </style>

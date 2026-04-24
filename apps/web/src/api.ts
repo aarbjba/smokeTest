@@ -177,7 +177,12 @@ export const api = {
   },
   ai: {
     reformulateTodo: (text: string) =>
-      request<{ title: string; description: string; tags: string[]; subtasks: string[] }>(`/ai/reformulate-todo`, {
+      request<{
+        title: string;
+        description: string;
+        tags: string[];
+        subtasks: Array<{ title: string; description: string }>;
+      }>(`/ai/reformulate-todo`, {
         method: 'POST',
         body: JSON.stringify({ text }),
       }),

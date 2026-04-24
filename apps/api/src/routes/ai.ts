@@ -13,11 +13,16 @@ const ReformulateSchema = z.object({
   text: z.string().min(1).max(MAX_INPUT_CHARS),
 });
 
+interface ReformulateSubtask {
+  title: string;
+  description: string;
+}
+
 interface ReformulateResult {
   title: string;
   description: string;
   tags: string[];
-  subtasks: string[];
+  subtasks: ReformulateSubtask[];
 }
 
 /**
@@ -121,11 +126,26 @@ function parseReformulateOutput(raw: string, original: string): ReformulateResul
             .filter(Boolean)
             .slice(0, 10)
         : [];
-      const subtasks = Array.isArray(obj.subtasks)
+      // Subtasks: accept either the new object shape `{title, description}` OR
+      // a legacy string (older prompt). Normalize to objects with a (possibly
+      // empty) description so downstream consumers have a single shape.
+      const subtasks: ReformulateSubtask[] = Array.isArray(obj.subtasks)
         ? obj.subtasks
-            .filter((s): s is string => typeof s === 'string')
-            .map((s) => s.trim())
-            .filter(Boolean)
+            .map((s): ReformulateSubtask | null => {
+              if (typeof s === 'string') {
+                const title = s.trim();
+                return title ? { title, description: '' } : null;
+              }
+              if (s && typeof s === 'object') {
+                const o = s as { title?: unknown; description?: unknown };
+                const title = typeof o.title === 'string' ? o.title.trim() : '';
+                if (!title) return null;
+                const desc = typeof o.description === 'string' ? o.description.trim() : '';
+                return { title, description: desc };
+              }
+              return null;
+            })
+            .filter((s): s is ReformulateSubtask => s !== null)
             .slice(0, 8)
         : [];
       return { title, description, tags, subtasks };
@@ -168,12 +188,12 @@ aiRouter.post('/reformulate-todo', async (req, res, next) => {
       '1. title: kurzer, klarer Titel (wie bisher).',
       '2. description: 1–3 Sätze, die Ziel und Kontext der Aufgabe zusammenfassen. Leerstring wenn die Eingabe bereits alles Nötige sagt.',
       '3. tags: siehe Tag-Regeln unten.',
-      '4. subtasks: 0–6 kleine Umsetzungsschritte (leere Liste wenn nicht sinnvoll).',
+      '4. subtasks: 0–6 kleine Umsetzungsschritte. Jeder Eintrag ist ein Objekt mit kurzem title UND optionaler description (1–2 Sätze Kontext/Hinweis für den Schritt). Leere Liste wenn keine Zerlegung sinnvoll ist. Lass description leer ("") wenn der Titel selbsterklärend ist.',
       '',
       tagSection,
       '',
       'Antworte AUSSCHLIESSLICH mit einem JSON-Objekt in genau diesem Format – ohne Code-Fence, ohne Kommentar, ohne zusätzlichen Text:',
-      '{"title": "<reformulierter Titel>", "description": "<kurze Beschreibung oder leer>", "tags": ["<tag1>"], "subtasks": ["<schritt 1>", "<schritt 2>"]}',
+      '{"title": "<reformulierter Titel>", "description": "<kurze Beschreibung oder leer>", "tags": ["<tag1>"], "subtasks": [{"title": "<schritt 1>", "description": "<hinweis oder leer>"}]}',
       '',
       'Eingabe:',
       text,
