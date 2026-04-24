@@ -3,8 +3,9 @@ import { onMounted, onUnmounted, ref, computed, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { marked } from 'marked';
 import { api } from '../api';
-import type { Todo, Snippet, TodoStatus, Analysis, TaskType } from '../types';
-import { STATUS_LABELS, STATUS_ICONS, TASK_TYPE_LABELS, TASK_TYPE_ICONS, TASK_TYPES } from '../types';
+import type { Todo, Snippet, TodoStatus, Analysis, TaskType, SandboxStatus } from '../types';
+import { STATUS_LABELS, STATUS_ICONS, TASK_TYPE_LABELS, TASK_TYPE_ICONS, TASK_TYPES, SANDBOX_STATUS_LABELS, SANDBOX_STATUS_COLOR } from '../types';
+import { computeAgentBranchName } from '../utils/branchName';
 import { useTodosStore } from '../stores/todos';
 import { useQueueStore } from '../stores/queue';
 import SnippetEditor from '../components/SnippetEditor.vue';
@@ -449,6 +450,57 @@ function onAgentCwdUpdate(cwd: string | null) {
   if (todo.value) todo.value.working_directory = cwd;
 }
 
+// ─── Sandbox-Lauf block ─────────────────────────────────────────────────────
+const sandboxOpen = ref(false);
+const sandboxStatus = computed<SandboxStatus>(
+  () => (todo.value?.sandbox_status ?? 'idle') as SandboxStatus,
+);
+const sandboxRunning = computed(() => sandboxStatus.value === 'running');
+const sandboxBranchPlaceholder = computed(() => {
+  if (!todo.value) return '';
+  return computeAgentBranchName(todo.value);
+});
+
+/**
+ * Persist a sandbox override through the regular undoable update path.
+ * Empty strings on text fields and nullable numerics are translated to `null`
+ * so the server clears the override and falls back to the global default.
+ */
+async function saveSandboxField<K extends keyof Todo>(key: K, value: Todo[K] | null) {
+  if (!todo.value) return;
+  try {
+    const updated = await todos.update(todo.value.id, { [key]: value } as Partial<Todo>);
+    todo.value = updated;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+function onSandboxBranchBlur(ev: FocusEvent) {
+  const value = ((ev.target as HTMLInputElement).value ?? '').trim();
+  void saveSandboxField('branch_name', value || null);
+}
+function onSandboxBaseBranchBlur(ev: FocusEvent) {
+  const value = ((ev.target as HTMLInputElement).value ?? '').trim();
+  void saveSandboxField('base_branch', value || null);
+}
+function onSandboxTestCommandBlur(ev: FocusEvent) {
+  const value = ((ev.target as HTMLInputElement).value ?? '').trim();
+  void saveSandboxField('test_command', value || null);
+}
+function onSandboxTimeoutBlur(ev: FocusEvent) {
+  const raw = (ev.target as HTMLInputElement).value;
+  if (raw === '') { void saveSandboxField('sandbox_timeout_min', null); return; }
+  const n = Math.max(1, Math.min(120, Number(raw)));
+  if (Number.isFinite(n)) void saveSandboxField('sandbox_timeout_min', n);
+}
+function onSandboxMaxTurnsBlur(ev: FocusEvent) {
+  const raw = (ev.target as HTMLInputElement).value;
+  if (raw === '') { void saveSandboxField('sandbox_max_turns', null); return; }
+  const n = Math.max(1, Math.min(80, Number(raw)));
+  if (Number.isFinite(n)) void saveSandboxField('sandbox_max_turns', n);
+}
+
 // Tab list driving the nav. Order matches the visual order of the tabs.
 const tabs = computed(() => [
   { key: 'overview' as TabKey, label: '📝 Übersicht', badge: null as number | null },
@@ -855,6 +907,101 @@ const tabs = computed(() => [
               @active="agentActive = $event"
             />
           </div>
+
+          <!-- Sandbox-Lauf: collapsible block with overrides + chip + PR link.
+               Fields go through saveSandboxField → todos.update so Ctrl+Z
+               reverts them; status changes bypass undo via _updateLocal. -->
+          <div class="card sandbox-section">
+            <button
+              type="button"
+              class="ghost sandbox-head"
+              @click="sandboxOpen = !sandboxOpen"
+            >
+              <span>{{ sandboxOpen ? '▾' : '▸' }} 🐳 Sandbox-Lauf</span>
+              <span
+                class="agent-badge sandbox-chip"
+                :class="`sandbox-chip-${sandboxStatus}`"
+                :style="{ color: `var(${SANDBOX_STATUS_COLOR[sandboxStatus]})`, borderColor: `var(${SANDBOX_STATUS_COLOR[sandboxStatus]})` }"
+              >{{ SANDBOX_STATUS_LABELS[sandboxStatus] }}</span>
+            </button>
+            <div v-if="sandboxOpen" class="sandbox-body">
+              <a
+                v-if="todo.sandbox_pr_url"
+                :href="todo.sandbox_pr_url"
+                target="_blank"
+                rel="noopener"
+                class="sandbox-pr-link"
+              >Draft-PR öffnen →</a>
+
+              <label class="stacked">
+                <span>Branch-Name</span>
+                <input
+                  type="text"
+                  :value="todo.branch_name ?? ''"
+                  :placeholder="sandboxBranchPlaceholder"
+                  :disabled="sandboxRunning"
+                  spellcheck="false"
+                  style="font-family: var(--font-mono); font-size: 0.85rem;"
+                  @blur="onSandboxBranchBlur"
+                  @keydown.enter.prevent="onSandboxBranchBlur($event as unknown as FocusEvent)"
+                />
+              </label>
+              <label class="stacked">
+                <span>Basis-Branch</span>
+                <input
+                  type="text"
+                  :value="todo.base_branch ?? ''"
+                  placeholder="develop"
+                  :disabled="sandboxRunning"
+                  spellcheck="false"
+                  style="font-family: var(--font-mono); font-size: 0.85rem;"
+                  @blur="onSandboxBaseBranchBlur"
+                  @keydown.enter.prevent="onSandboxBaseBranchBlur($event as unknown as FocusEvent)"
+                />
+              </label>
+              <label class="stacked">
+                <span>Test-Kommando</span>
+                <input
+                  type="text"
+                  :value="todo.test_command ?? ''"
+                  placeholder="npm test / pytest / …"
+                  :disabled="sandboxRunning"
+                  spellcheck="false"
+                  style="font-family: var(--font-mono); font-size: 0.85rem;"
+                  @blur="onSandboxTestCommandBlur"
+                  @keydown.enter.prevent="onSandboxTestCommandBlur($event as unknown as FocusEvent)"
+                />
+              </label>
+              <div class="row" style="gap: 0.5rem;">
+                <label class="stacked" style="flex: 1;">
+                  <span>Timeout (Minuten)</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="120"
+                    :value="todo.sandbox_timeout_min ?? ''"
+                    placeholder="30"
+                    :disabled="sandboxRunning"
+                    @blur="onSandboxTimeoutBlur"
+                    @keydown.enter.prevent="onSandboxTimeoutBlur($event as unknown as FocusEvent)"
+                  />
+                </label>
+                <label class="stacked" style="flex: 1;">
+                  <span>Max. Turns</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="80"
+                    :value="todo.sandbox_max_turns ?? ''"
+                    placeholder="40"
+                    :disabled="sandboxRunning"
+                    @blur="onSandboxMaxTurnsBlur"
+                    @keydown.enter.prevent="onSandboxMaxTurnsBlur($event as unknown as FocusEvent)"
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </template>
@@ -994,4 +1141,38 @@ const tabs = computed(() => [
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Sandbox-Lauf block — collapsible card in the detail-side column. Header is
+   a full-width ghost button so the chip sits flush right. */
+.sandbox-section {
+  padding: 0.75rem 1rem;
+}
+.sandbox-head {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+  padding: 0.25rem 0.1rem;
+  font-family: var(--font-display);
+  letter-spacing: 0.04em;
+}
+.sandbox-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+.sandbox-pr-link {
+  display: inline-block;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--success);
+  color: var(--success);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  text-decoration: none;
+  align-self: flex-start;
+}
+.sandbox-pr-link:hover { filter: brightness(1.1); text-decoration: none; }
 </style>
