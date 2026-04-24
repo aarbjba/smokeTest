@@ -49,8 +49,8 @@ server.tool(
   'list_todos',
   'List active (non-trashed) todos from the werkbank. Optionally filter by status or search query.',
   {
-    status: z.enum(['todo', 'in_progress', 'test', 'done']).optional()
-      .describe('Only return todos in this status. Omit for all statuses.'),
+    status: z.enum(['todo', 'in_progress', 'test', 'done', 'pending']).optional()
+      .describe('Only return todos in this status. Omit for all statuses. "pending" = waiting for info collection (Pendliste).'),
     search: z.string().optional()
       .describe('Case-insensitive substring match against title and description.'),
   },
@@ -88,7 +88,8 @@ server.tool(
   {
     title: z.string().min(1).max(500),
     description: z.string().max(10_000).optional(),
-    status: z.enum(['todo', 'in_progress', 'test', 'done']).optional(),
+    status: z.enum(['todo', 'in_progress', 'test', 'done', 'pending']).optional()
+      .describe('"pending" parks the todo in the Pendliste (info-gathering, hidden from the board).'),
     priority: z.number().int().min(1).max(4).optional()
       .describe('1=urgent, 2=normal (default), 3=low, 4=someday.'),
     tags: z.array(z.string().max(50)).optional(),
@@ -96,8 +97,17 @@ server.tool(
       .describe('ISO 8601 datetime string, or YYYY-MM-DD (converted to start of day).'),
     task_type: z.enum(['feature', 'bug', 'chore', 'customer', 'research', 'other']).optional()
       .describe('Aufgabentyp: feature, bug, chore (maintenance/refactor), customer, research, other (default).'),
-    subtasks: z.array(z.string().min(1).max(500)).optional()
-      .describe('Titles of subtasks to create under the new todo.'),
+    subtasks: z.array(
+      z.union([
+        z.string().min(1).max(500),
+        z.object({
+          title: z.string().min(1).max(500),
+          description: z.string().max(5_000).optional(),
+          linked_todo_id: z.number().int().positive().nullable().optional(),
+        }),
+      ]),
+    ).optional()
+      .describe('Subtasks to create under the new todo. Either strings (title only) or objects with title + optional description + optional linked_todo_id.'),
   },
   async (args) => {
     const due = args.due_date
@@ -122,10 +132,18 @@ server.tool(
 
     const subtasksCreated: unknown[] = [];
     if (args.subtasks && args.subtasks.length > 0) {
-      for (const title of args.subtasks) {
+      for (const s of args.subtasks) {
+        const payload = typeof s === 'string'
+          ? { todo_id: created.id, title: s }
+          : {
+              todo_id: created.id,
+              title: s.title,
+              ...(s.description !== undefined ? { description: s.description } : {}),
+              ...(s.linked_todo_id !== undefined ? { linked_todo_id: s.linked_todo_id } : {}),
+            };
         const sub = await call<unknown>('/api/subtasks', {
           method: 'POST',
-          body: JSON.stringify({ todo_id: created.id, title }),
+          body: JSON.stringify(payload),
         });
         subtasksCreated.push(sub);
       }
@@ -142,7 +160,8 @@ server.tool(
     id: z.number().int().positive(),
     title: z.string().min(1).max(500).optional(),
     description: z.string().max(10_000).optional(),
-    status: z.enum(['todo', 'in_progress', 'test', 'done']).optional(),
+    status: z.enum(['todo', 'in_progress', 'test', 'done', 'pending']).optional()
+      .describe('"pending" parks the todo in the Pendliste until info gathering completes.'),
     priority: z.number().int().min(1).max(4).optional(),
     tags: z.array(z.string().max(50)).optional(),
     due_date: z.string().nullable().optional()
@@ -211,15 +230,22 @@ server.tool(
 // ─── suggest_subtask (analyse mode) ────────────────────────────────────────
 server.tool(
   'suggest_subtask',
-  'Propose a subtask for the user to accept or reject. Use this during analyse mode instead of add_subtask — the subtask is created with suggested=1 and renders with Accept/Reject buttons in the UI.',
+  'Propose a subtask for the user to accept or reject. Use this during analyse mode instead of add_subtask — the subtask is created with suggested=1 and renders with Accept/Reject buttons in the UI. Pass `description` to attach notes/context that expand when the subtask row is opened.',
   {
     todo_id: z.number().int().positive(),
     title: z.string().min(1).max(500),
+    description: z.string().max(5_000).optional()
+      .describe('Optional notes/context shown in the subtask detail panel. Useful for collected info or open questions.'),
   },
-  async ({ todo_id, title }) => {
+  async ({ todo_id, title, description }) => {
     const created = await call<unknown>('/api/subtasks', {
       method: 'POST',
-      body: JSON.stringify({ todo_id, title, suggested: true }),
+      body: JSON.stringify({
+        todo_id,
+        title,
+        suggested: true,
+        ...(description !== undefined ? { description } : {}),
+      }),
     });
     return asText(created);
   },
@@ -250,8 +276,8 @@ server.tool(
   {
     id: z.number().int().positive(),
     summary: z.string().min(1).max(20_000).describe('Short summary of what you did, what changed, what remains open.'),
-    next_status: z.enum(['todo', 'in_progress', 'test', 'done']).optional()
-      .describe('Target status after summarizing. Defaults to "test" (user reviews before closing).'),
+    next_status: z.enum(['todo', 'in_progress', 'test', 'done', 'pending']).optional()
+      .describe('Target status after summarizing. Defaults to "test" (user reviews before closing). Use "pending" when the todo still needs info and should sit in the Pendliste.'),
   },
   async ({ id, summary, next_status }) => {
     // Fetch existing description so we can append rather than overwrite.

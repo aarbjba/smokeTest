@@ -8,7 +8,7 @@ type IntegrationRow = {
   config: string;
 };
 
-export type LocalStatus = 'todo' | 'in_progress' | 'test' | 'done';
+export type LocalStatus = 'todo' | 'in_progress' | 'test' | 'done' | 'pending';
 
 export type TodoForWriteback = {
   id: number;
@@ -128,6 +128,13 @@ export async function writebackJiraStatus(todo: TodoForWriteback): Promise<void>
 // -------- Dispatcher --------
 
 export async function writebackStatus(todo: TodoForWriteback): Promise<{ ok: true } | { ok: false; error: string } | { skipped: true }> {
+  // `pending` is a local-only "info-gathering" state with no remote analogue —
+  // skip writeback on either side of the transition so we don't close issues
+  // when the analyse-agent parks a todo in Pendliste, and don't reopen them
+  // when the user moves it back.
+  if (todo.status === 'pending' || todo.oldStatus === 'pending') {
+    return { skipped: true };
+  }
   // Skip writeback if mapping the old and new local status to the remote system's
   // coarser status produces the same value. Example: in_progress <-> test (both Jira 'indeterminate').
   if (todo.oldStatus) {

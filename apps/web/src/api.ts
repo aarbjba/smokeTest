@@ -359,7 +359,7 @@ export const api = {
 export interface StandupItem {
   id: number;
   title: string;
-  status: 'todo' | 'in_progress' | 'test' | 'done';
+  status: 'todo' | 'in_progress' | 'test' | 'done' | 'pending';
   tags: string[];
 }
 

@@ -1,4 +1,4 @@
-export type TodoStatus = 'todo' | 'in_progress' | 'test' | 'done';
+export type TodoStatus = 'todo' | 'in_progress' | 'test' | 'done' | 'pending';
 export type TodoSource = 'local' | 'github' | 'jira';
 export type TaskType = 'feature' | 'bug' | 'chore' | 'customer' | 'research' | 'other';
 export type TaskTypeFilter = 'all' | TaskType;
@@ -234,6 +234,7 @@ export const STATUS_LABELS: Record<TodoStatus, string> = {
   in_progress: 'Unter Hammer',
   test: 'Prüfstand',
   done: 'Ablage',
+  pending: 'Pendliste',
 };
 
 export const STATUS_ICONS: Record<TodoStatus, string> = {
@@ -241,7 +242,12 @@ export const STATUS_ICONS: Record<TodoStatus, string> = {
   in_progress: '🔨',
   test: '🧪',
   done: '✅',
+  pending: '📥',
 };
+
+// Statuses that appear as board columns. `pending` is intentionally excluded —
+// Pendliste-todos live in /pending, not the board.
+export const BOARD_STATUSES: TodoStatus[] = ['todo', 'in_progress', 'test', 'done'];
 
 export const PRIORITY_LABELS: Record<number, string> = {
   1: 'Dringend',

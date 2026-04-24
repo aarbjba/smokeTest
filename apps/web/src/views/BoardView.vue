@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useTodosStore } from '../stores/todos';
-import type { TodoStatus } from '../types';
+import { BOARD_STATUSES, type TodoStatus } from '../types';
 import { api } from '../api';
 import Column from '../components/Column.vue';
 import NewTodoForm from '../components/NewTodoForm.vue';
@@ -13,7 +13,8 @@ import BulkActionsBar from '../components/BulkActionsBar.vue';
 
 const todos = useTodosStore();
 const router = useRouter();
-const statuses: TodoStatus[] = ['todo', 'in_progress', 'test', 'done'];
+// `pending` is handled by the Pendliste view (/pending), not the board.
+const statuses: TodoStatus[] = BOARD_STATUSES;
 const search = ref(todos.search ?? '');
 const newTodoForm = ref<InstanceType<typeof NewTodoForm> | null>(null);
 

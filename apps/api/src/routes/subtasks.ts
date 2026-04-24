@@ -18,7 +18,7 @@ type SubtaskRow = {
 
 type SubtaskJoinedRow = SubtaskRow & {
   linked_title: string | null;
-  linked_status: 'todo' | 'in_progress' | 'test' | 'done' | null;
+  linked_status: 'todo' | 'in_progress' | 'test' | 'done' | 'pending' | null;
   linked_deleted_at: string | null;
 };
 

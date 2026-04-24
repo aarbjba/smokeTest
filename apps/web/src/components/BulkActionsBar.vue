@@ -13,7 +13,7 @@ const tagInput = ref('');
 const busy = ref(false);
 const error = ref<string | null>(null);
 
-const statuses: TodoStatus[] = ['todo', 'in_progress', 'test', 'done'];
+const statuses: TodoStatus[] = ['todo', 'in_progress', 'test', 'done', 'pending'];
 
 async function bulkMove(status: TodoStatus) {
   if (selection.count === 0 || busy.value) return;

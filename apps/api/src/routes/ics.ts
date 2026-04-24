@@ -7,7 +7,7 @@ type TodoIcsRow = {
   id: number;
   title: string;
   description: string;
-  status: 'todo' | 'in_progress' | 'test' | 'done';
+  status: 'todo' | 'in_progress' | 'test' | 'done' | 'pending';
   due_date: string | null;
   created_at: string;
   updated_at: string;

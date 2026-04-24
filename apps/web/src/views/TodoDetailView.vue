@@ -149,7 +149,7 @@ async function deleteAnalysis(id: number) {
   }
 }
 
-const statuses: TodoStatus[] = ['todo', 'in_progress', 'test', 'done'];
+const statuses: TodoStatus[] = ['todo', 'in_progress', 'test', 'done', 'pending'];
 const todoId = computed(() => Number(props.id));
 
 // Description preview: render markdown, then linkify any stack-trace paths.

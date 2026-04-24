@@ -37,7 +37,7 @@ pomodoroRouter.post('/:id/end', async (req, res) => {
   if (session.mode === 'work' && session.completed === 1 && session.todo_id) {
     const todo = db.prepare(
       `SELECT id, source, source_ref, status FROM todos WHERE id = ?`
-    ).get(session.todo_id) as { id: number; source: 'local' | 'github' | 'jira'; source_ref: string | null; status: 'todo' | 'in_progress' | 'done' } | undefined;
+    ).get(session.todo_id) as { id: number; source: 'local' | 'github' | 'jira'; source_ref: string | null; status: 'todo' | 'in_progress' | 'test' | 'done' | 'pending' } | undefined;
     if (todo && todo.source === 'jira') {
       worklog = await writebackJiraWorklog(todo, session.duration_seconds);
     }

@@ -9,7 +9,7 @@ type TodoRow = {
   id: number;
   title: string;
   description: string;
-  status: 'todo' | 'in_progress' | 'done';
+  status: 'todo' | 'in_progress' | 'test' | 'done' | 'pending';
   priority: number;
   tags: string;
   due_date: string | null;
@@ -126,9 +126,9 @@ todosRouter.delete('/trash', (_req, res) => {
  * Positions are assigned 0..N in the given order.
  */
 todosRouter.post('/reorder', (req, res) => {
-  const status = req.body?.status as 'todo' | 'in_progress' | 'test' | 'done' | undefined;
+  const status = req.body?.status as 'todo' | 'in_progress' | 'test' | 'done' | 'pending' | undefined;
   const ids = Array.isArray(req.body?.orderedIds) ? (req.body.orderedIds as unknown[]).map(Number).filter(Number.isFinite) : [];
-  if (!status || !['todo', 'in_progress', 'test', 'done'].includes(status) || ids.length === 0) {
+  if (!status || !['todo', 'in_progress', 'test', 'done', 'pending'].includes(status) || ids.length === 0) {
     return res.status(400).json({ error: 'status and orderedIds required' });
   }
   const update = db.prepare(`UPDATE todos SET position = ? WHERE id = ? AND status = ?`);
@@ -313,7 +313,7 @@ todosRouter.patch('/:id', async (req, res) => {
   const merged = {
     title: patch.title ?? existing.title,
     description: patch.description ?? existing.description,
-    status: (patch.status ?? existing.status) as 'todo' | 'in_progress' | 'test' | 'done',
+    status: (patch.status ?? existing.status) as 'todo' | 'in_progress' | 'test' | 'done' | 'pending',
     priority: patch.priority ?? existing.priority,
     tags: patch.tags !== undefined ? JSON.stringify(patch.tags) : existing.tags,
     due_date: patch.due_date !== undefined ? patch.due_date : existing.due_date,

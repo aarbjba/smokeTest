@@ -6,7 +6,7 @@ export const standupRouter = Router();
 type TodoStandupRow = {
   id: number;
   title: string;
-  status: 'todo' | 'in_progress' | 'test' | 'done';
+  status: 'todo' | 'in_progress' | 'test' | 'done' | 'pending';
   tags: string;
   updated_at: string;
 };
@@ -14,7 +14,7 @@ type TodoStandupRow = {
 export interface StandupItem {
   id: number;
   title: string;
-  status: 'todo' | 'in_progress' | 'test' | 'done';
+  status: 'todo' | 'in_progress' | 'test' | 'done' | 'pending';
   tags: string[];
 }
 

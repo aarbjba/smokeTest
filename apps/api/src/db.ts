@@ -16,7 +16,7 @@ export function initDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
       description TEXT DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo','in_progress','test','done')),
+      status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo','in_progress','test','done','pending')),
       priority INTEGER NOT NULL DEFAULT 2 CHECK(priority BETWEEN 1 AND 4),
       tags TEXT NOT NULL DEFAULT '[]',
       due_date TEXT,
@@ -242,8 +242,9 @@ function addColumnIfMissing(table: string, column: string, typeDecl: string) {
 }
 
 /**
- * Rebuild the `todos` table if its CHECK constraint on `status` does not yet include 'test'.
- * SQLite cannot ALTER a CHECK constraint in place, so we clone, copy, drop, rename.
+ * Rebuild the `todos` table if its CHECK constraint on `status` is missing any
+ * of the currently supported statuses (`test`, `pending`). SQLite cannot ALTER
+ * a CHECK constraint in place, so we clone, copy, drop, rename.
  *
  * Crucially, we set `PRAGMA legacy_alter_table = 1` around the RENAME. Without
  * it, SQLite's "modern" ALTER TABLE behavior automatically rewrites foreign
@@ -257,7 +258,9 @@ function addColumnIfMissing(table: string, column: string, typeDecl: string) {
 function migrateTodosStatusCheck() {
   const row = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'todos'`).get() as { sql: string } | undefined;
   if (!row) return;
-  if (row.sql.includes("'test'")) return; // already expanded
+  // Short-circuit when every supported status is already listed. Add new
+  // statuses here when the enum grows.
+  if (row.sql.includes("'test'") && row.sql.includes("'pending'")) return;
 
   // Gather all columns from the existing table so we copy them verbatim.
   const cols = db.prepare(`PRAGMA table_info(todos)`).all() as { name: string }[];
@@ -273,7 +276,7 @@ function migrateTodosStatusCheck() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
         description TEXT DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo','in_progress','test','done')),
+        status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo','in_progress','test','done','pending')),
         priority INTEGER NOT NULL DEFAULT 2 CHECK(priority BETWEEN 1 AND 4),
         tags TEXT NOT NULL DEFAULT '[]',
         due_date TEXT,
@@ -293,7 +296,7 @@ function migrateTodosStatusCheck() {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_todos_status ON todos(status)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_todos_source ON todos(source)`);
     db.exec('COMMIT');
-    console.log('[migration] todos table rebuilt with expanded status CHECK (test included)');
+    console.log('[migration] todos table rebuilt with expanded status CHECK (test + pending included)');
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;

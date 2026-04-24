@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
-export const TodoStatus = z.enum(['todo', 'in_progress', 'test', 'done']);
+// `pending` marks a todo that is still being fleshed out by the analyse-agent —
+// it's intentionally hidden from the board (see BoardView) and surfaced only in
+// the Pendliste view (/pending). Writeback skips `pending` entirely because no
+// remote system has an analogue state.
+export const TodoStatus = z.enum(['todo', 'in_progress', 'test', 'done', 'pending']);
 
 // Aufgabentypen — classifies the nature of the todo. Stored as plain TEXT on
 // todos.task_type; the Zod enum is the single source of truth so the column
@@ -124,7 +128,7 @@ export const BulkTodoSchema = z.object({
   action: z.enum(['move', 'tag', 'delete', 'restore', 'purge']),
   payload: z
     .object({
-      status: z.enum(['todo', 'in_progress', 'test', 'done']).optional(),
+      status: z.enum(['todo', 'in_progress', 'test', 'done', 'pending']).optional(),
       tag: z.string().min(1).max(50).optional(),
     })
     .optional()
