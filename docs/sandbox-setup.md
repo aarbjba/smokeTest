@@ -134,6 +134,8 @@ Expected: pulls the image on lp03, prints the hello-world banner, exits 0. `dock
 
 13. **`docker.io` vs `docker-ce` / `containerd.io`.** On hosts where `containerd.io` from Docker's official repo is already installed (e.g. because someone tried `docker-ce` first, or an orchestrator dropped it there), installing the Ubuntu `docker.io` meta-package pulls the conflicting `containerd` and breaks the install. Always prefer `docker-ce + docker-ce-cli + containerd.io` from `download.docker.com` as documented in the install section above. Run `dpkg -l | grep -E 'docker|containerd'` first to see what's there.
 
+14. **`--security-opt no-new-privileges:true` conflicts with `sudo` in the entrypoint.** The image starts as the `node` user and invokes `sudo /usr/local/bin/init-firewall.sh` once at container start. `no-new-privileges` blocks the setuid transition that `sudo` needs, even with the passwordless sudoers entry. Omit this flag for now. Clean fix (tracked as a follow-up): restructure the entrypoint to start as root, run the firewall init directly, then drop to `node` via `gosu` — that removes the setuid transition and makes `no-new-privileges` compatible again. Tradeoff of omitting the flag: an in-container setuid escalation becomes theoretically possible, but the image has no SUID binaries and `--cap-drop=ALL` already prevents most abuse paths.
+
 ---
 
 ## End-to-end manual run log
