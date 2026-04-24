@@ -1,4 +1,4 @@
-import type { Todo, Snippet, Subtask, PomodoroSession, Integration, TodoStatus, Attachment, Recurrence, RecurrenceFrequency, McpServerConfig, RepoMapping, RepoMappingSource, Analysis, QueueItem, SandboxRun } from './types';
+import type { Todo, Snippet, Subtask, SubtaskDraft, PomodoroSession, Integration, TodoStatus, Attachment, Recurrence, RecurrenceFrequency, McpServerConfig, RepoMapping, RepoMappingSource, Analysis, QueueItem, SandboxRun } from './types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(`/api${path}`, {
@@ -38,7 +38,7 @@ export const api = {
       return request<Todo[]>(`/todos${qs ? `?${qs}` : ''}`);
     },
     get:    (id: number) => request<Todo>(`/todos/${id}`),
-    create: (data: Partial<Todo> & { subtasks?: string[] }) =>
+    create: (data: Partial<Todo> & { subtasks?: Array<string | SubtaskDraft> }) =>
       request<Todo>(`/todos`, { method: 'POST', body: JSON.stringify(data) }),
     update: (id: number, data: Partial<Todo>) => request<Todo>(`/todos/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     // Soft delete by default (moves to Papierkorb). Pass { permanent: true } for hard delete.
@@ -78,9 +78,32 @@ export const api = {
   },
   subtasks: {
     byTodo: (todoId: number) => request<Subtask[]>(`/subtasks/by-todo/${todoId}`),
-    create: (todoId: number, title: string) =>
-      request<Subtask>(`/subtasks`, { method: 'POST', body: JSON.stringify({ todo_id: todoId, title }) }),
-    update: (id: number, patch: { title?: string; done?: boolean | 0 | 1; position?: number; suggested?: boolean }) =>
+    create: (
+      todoId: number,
+      title: string,
+      extras: { description?: string; linked_todo_id?: number | null } = {},
+    ) =>
+      request<Subtask>(`/subtasks`, {
+        method: 'POST',
+        body: JSON.stringify({
+          todo_id: todoId,
+          title,
+          ...(extras.description !== undefined ? { description: extras.description } : {}),
+          ...(extras.linked_todo_id !== undefined ? { linked_todo_id: extras.linked_todo_id } : {}),
+        }),
+      }),
+    update: (
+      id: number,
+      patch: {
+        title?: string;
+        description?: string;
+        done?: boolean | 0 | 1;
+        position?: number;
+        suggested?: boolean;
+        // null clears the link, omit leaves it untouched.
+        linked_todo_id?: number | null;
+      },
+    ) =>
       request<Subtask>(`/subtasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
     remove: (id: number) => request<void>(`/subtasks/${id}`, { method: 'DELETE' }),
     // Accept an analyse-mode suggestion: clears the suggested flag, subtask becomes real work.

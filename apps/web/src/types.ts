@@ -110,10 +110,24 @@ export interface Subtask {
   id: number;
   todo_id: number;
   title: string;
+  description: string;
   done: 0 | 1;
   position: number;
   created_at: string;
   suggested: 0 | 1;
+  // FK to a real todo. When non-null the subtask's `done` flag is ignored —
+  // completion follows the linked todo's status (mirrored in `linked_todo`).
+  linked_todo_id: number | null;
+  linked_todo: { id: number; title: string; status: TodoStatus } | null;
+}
+
+// Object form accepted by POST /todos when creating a todo with subtasks
+// in the same payload. The Zod schema also accepts plain strings for legacy
+// callers (AI reformulation), but the editor sends this richer shape.
+export interface SubtaskDraft {
+  title: string;
+  description?: string;
+  linked_todo_id?: number | null;
 }
 
 export interface Analysis {

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { api } from '../api';
-import type { Todo, TodoStatus, SourceFilter, TaskType } from '../types';
+import type { Todo, TodoStatus, SourceFilter, TaskType, SubtaskDraft } from '../types';
 import { useUndoStore } from './undo';
 
 const SOURCE_FILTER_KEY = 'werkbank:source-filter';
@@ -175,7 +175,7 @@ export const useTodosStore = defineStore('todos', {
       catch (e) { this.error = e instanceof Error ? e.message : String(e); }
       finally { this.loading = false; }
     },
-    async create(data: Partial<Todo> & { subtasks?: string[] }) {
+    async create(data: Partial<Todo> & { subtasks?: Array<string | SubtaskDraft> }) {
       const created = await api.todos.create(data);
       this.items.unshift(created);
       return created;

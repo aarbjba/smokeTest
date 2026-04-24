@@ -185,15 +185,24 @@ server.tool(
 // ─── add_subtask ───────────────────────────────────────────────────────────
 server.tool(
   'add_subtask',
-  'Add a subtask to an existing todo.',
+  'Add a subtask to an existing todo. Supports an optional description (notes/context) and an optional link to another todo (use linked_todo_id when the subtask should track another todo\'s completion).',
   {
     todo_id: z.number().int().positive(),
     title: z.string().min(1).max(500),
+    description: z.string().max(5_000).optional()
+      .describe('Free-form notes shown when the subtask row is expanded. Leave empty if not needed.'),
+    linked_todo_id: z.number().int().positive().optional()
+      .describe('When set, the subtask\'s done state follows this todo\'s status (status="done" → ticked).'),
   },
-  async ({ todo_id, title }) => {
+  async ({ todo_id, title, description, linked_todo_id }) => {
     const created = await call<unknown>('/api/subtasks', {
       method: 'POST',
-      body: JSON.stringify({ todo_id, title }),
+      body: JSON.stringify({
+        todo_id,
+        title,
+        ...(description !== undefined ? { description } : {}),
+        ...(linked_todo_id !== undefined ? { linked_todo_id } : {}),
+      }),
     });
     return asText(created);
   },
@@ -268,19 +277,25 @@ server.tool(
   },
 );
 
-// ─── update_subtask (cross off / rename) ───────────────────────────────────
+// ─── update_subtask (cross off / rename / describe / link) ─────────────────
 server.tool(
   'update_subtask',
-  'Update a subtask. Use `done: true` to cross it off, `done: false` to uncheck. Can also rename via `title`.',
+  'Update a subtask. Use `done: true` to cross it off, `done: false` to uncheck. Can also rename via `title`, attach notes via `description`, and link/unlink another todo via `linked_todo_id` (pass null to clear the link). Linked subtasks ignore the local `done` flag — completion follows the linked todo\'s status.',
   {
     id: z.number().int().positive().describe('Subtask id (not the parent todo id).'),
     title: z.string().min(1).max(500).optional(),
     done: z.boolean().optional().describe('true = crossed off, false = open.'),
+    description: z.string().max(5_000).optional()
+      .describe('Free-form notes; pass empty string to clear.'),
+    linked_todo_id: z.number().int().positive().nullable().optional()
+      .describe('Link this subtask to another todo. Pass null to remove the link.'),
   },
-  async ({ id, title, done }) => {
+  async ({ id, title, done, description, linked_todo_id }) => {
     const patch: Record<string, unknown> = {};
     if (title !== undefined) patch.title = title;
     if (done !== undefined) patch.done = done;
+    if (description !== undefined) patch.description = description;
+    if (linked_todo_id !== undefined) patch.linked_todo_id = linked_todo_id;
     const updated = await call<unknown>(`/api/subtasks/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),

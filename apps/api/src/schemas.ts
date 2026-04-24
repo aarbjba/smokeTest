@@ -24,7 +24,20 @@ export const CreateTodoSchema = z.object({
   due_date: z.string().datetime().nullable().optional(),
   working_directory: z.string().max(1000).nullable().optional(),
   task_type: TaskType.optional().default('other'),
-  subtasks: z.array(z.string().min(1).max(500)).max(100).optional(),
+  // Subtasks attached at todo creation. Strings stay supported for callers that
+  // still ship the legacy JSON-of-titles shape (AI reformulation, older clients);
+  // objects let the new editor hand over a description and an optional link to
+  // an existing todo in the same payload.
+  subtasks: z.array(
+    z.union([
+      z.string().min(1).max(500),
+      z.object({
+        title: z.string().min(1).max(500),
+        description: z.string().max(5_000).optional().default(''),
+        linked_todo_id: z.number().int().positive().nullable().optional(),
+      }),
+    ]),
+  ).max(100).optional(),
   // Per-todo preprompt override. NULL = fall back to global setting. Max
   // 50k mirrors the runtime cap in the agent-start schema below.
   preprompt: z.string().max(50_000).nullable().optional(),
@@ -64,14 +77,21 @@ export const SnippetSchema = z.object({
 export const CreateSubtaskSchema = z.object({
   todo_id: z.number().int().positive(),
   title: z.string().min(1).max(500),
+  description: z.string().max(5_000).optional().default(''),
+  // Optional link to an existing todo. When set, the subtask's local `done`
+  // flag is ignored — completion is derived from the linked todo's status.
+  linked_todo_id: z.number().int().positive().nullable().optional(),
   suggested: z.boolean().optional().default(false),
 });
 
 export const UpdateSubtaskSchema = z.object({
   title: z.string().min(1).max(500).optional(),
+  description: z.string().max(5_000).optional(),
   done: z.union([z.boolean(), z.number().int().min(0).max(1)]).optional(),
   position: z.number().int().min(0).optional(),
   suggested: z.boolean().optional(),
+  // Pass null to clear the link.
+  linked_todo_id: z.number().int().positive().nullable().optional(),
 });
 
 export const CreateAnalysisSchema = z.object({

@@ -59,11 +59,26 @@ function hydrate(row: TodoRow) {
 
 // Select list includes subtask aggregates via correlated subqueries so the board
 // can show "☑ done/total" progress without a per-card fetch.
+//
+// `subtask_done` mixes two completion signals: standalone subtasks count via
+// their own `done` flag, while linked subtasks count when the linked todo's
+// status='done'. The LEFT JOIN inside the subquery is fine because both legs
+// of the OR exclude the other shape.
 const TODO_LIST_SELECT = `
   SELECT todos.*,
-    (SELECT COUNT(*) FROM subtasks WHERE subtasks.todo_id = todos.id AND subtasks.suggested = 0) AS subtask_total,
-    (SELECT COUNT(*) FROM subtasks WHERE subtasks.todo_id = todos.id AND subtasks.done = 1 AND subtasks.suggested = 0) AS subtask_done,
-    (SELECT COUNT(*) FROM subtasks WHERE subtasks.todo_id = todos.id AND subtasks.suggested = 1) AS subtask_suggested
+    (SELECT COUNT(*) FROM subtasks s WHERE s.todo_id = todos.id AND s.suggested = 0) AS subtask_total,
+    (
+      SELECT COUNT(*)
+      FROM subtasks s
+      LEFT JOIN todos lt ON lt.id = s.linked_todo_id
+      WHERE s.todo_id = todos.id
+        AND s.suggested = 0
+        AND (
+          (s.linked_todo_id IS NULL AND s.done = 1)
+          OR (s.linked_todo_id IS NOT NULL AND lt.status = 'done' AND lt.deleted_at IS NULL)
+        )
+    ) AS subtask_done,
+    (SELECT COUNT(*) FROM subtasks s WHERE s.todo_id = todos.id AND s.suggested = 1) AS subtask_suggested
   FROM todos
 `;
 
@@ -233,7 +248,8 @@ todosRouter.post('/', (req, res) => {
      VALUES (@title, @description, @status, @priority, @tags, @due_date, 'local', @task_type)`
   );
   const insertSubtask = db.prepare(
-    `INSERT INTO subtasks (todo_id, title, done, position, suggested) VALUES (?, ?, 0, ?, 0)`
+    `INSERT INTO subtasks (todo_id, title, description, done, position, suggested, linked_todo_id)
+     VALUES (?, ?, ?, 0, ?, 0, ?)`,
   );
   const tx = db.transaction(() => {
     const info = insertTodo.run({
@@ -247,10 +263,23 @@ todosRouter.post('/', (req, res) => {
     });
     const todoId = Number(info.lastInsertRowid);
     let pos = 0;
-    for (const rawTitle of data.subtasks ?? []) {
-      const trimmed = rawTitle.trim();
-      if (!trimmed) continue;
-      insertSubtask.run(todoId, trimmed, pos);
+    // Accept both legacy strings and the new object shape — the schema union
+    // allows either, so the AI/AI-reformulation path keeps working unchanged.
+    for (const raw of data.subtasks ?? []) {
+      let title: string;
+      let description = '';
+      let linkedTodoId: number | null = null;
+      if (typeof raw === 'string') {
+        title = raw.trim();
+      } else {
+        title = raw.title.trim();
+        description = (raw.description ?? '').trim();
+        if (raw.linked_todo_id != null && raw.linked_todo_id !== todoId) {
+          linkedTodoId = raw.linked_todo_id;
+        }
+      }
+      if (!title) continue;
+      insertSubtask.run(todoId, title, description, pos, linkedTodoId);
       pos += 1;
     }
     return todoId;

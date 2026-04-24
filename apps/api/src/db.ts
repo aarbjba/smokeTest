@@ -153,6 +153,20 @@ export function initDb() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_todos_queue_position ON todos(queue_position)`);
   // Analyse-mode artifact: subtasks flagged as suggestions awaiting accept/reject.
   addColumnIfMissing('subtasks', 'suggested', 'INTEGER NOT NULL DEFAULT 0');
+  // Free-form description, edited inline in the subtask list. Optional; empty
+  // string means "no extra notes" — UI hides the block when blank.
+  addColumnIfMissing('subtasks', 'description', `TEXT NOT NULL DEFAULT ''`);
+  // Link a subtask to an existing todo. When set, the subtask's `done` flag is
+  // ignored at aggregate time and the linked todo's status='done' counts instead
+  // (see TODO_LIST_SELECT in routes/todos.ts). FK uses ON DELETE SET NULL so a
+  // deleted target turns the link into a regular standalone subtask. SQLite
+  // honours REFERENCES on ALTER TABLE ADD COLUMN once foreign_keys=ON.
+  addColumnIfMissing(
+    'subtasks',
+    'linked_todo_id',
+    'INTEGER REFERENCES todos(id) ON DELETE SET NULL',
+  );
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_subtasks_linked_todo ON subtasks(linked_todo_id)`);
   // Aufgabentyp: classifies the todo (feature/bug/chore/customer/research/other).
   // No CHECK constraint — validation happens in the Zod layer (schemas.ts) so we
   // can evolve the enum without schema rebuilds.
