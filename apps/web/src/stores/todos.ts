@@ -180,6 +180,18 @@ export const useTodosStore = defineStore('todos', {
       this.items.unshift(created);
       return created;
     },
+    /**
+     * Mutate the local in-memory mirror WITHOUT an API call and WITHOUT
+     * pushing to the undo stack. Purpose-built for optimistic sandbox status
+     * updates (start + SSE end) where the server remains authoritative via
+     * the SSE stream; surfacing these in Ctrl+Z would let the user "undo" a
+     * machine-driven state transition which isn't meaningful.
+     */
+    _updateLocal(id: number, patch: Partial<Todo>) {
+      const idx = this.items.findIndex((t) => t.id === id);
+      if (idx < 0) return;
+      this.items.splice(idx, 1, { ...this.items[idx], ...patch });
+    },
     async update(id: number, data: Partial<Todo>) {
       // Capture BEFORE mutation so we can restore original field values.
       const before = this.items.find((t) => t.id === id);

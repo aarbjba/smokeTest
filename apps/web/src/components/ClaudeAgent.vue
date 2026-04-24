@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import type { Todo, Attachment } from '../types';
+import type { Todo, Attachment, Integration } from '../types';
 import { api, type AgentSession } from '../api';
 import PathPicker from './PathPicker.vue';
 import { useTodosStore } from '../stores/todos';
+import { computeAgentBranchName } from '../utils/branchName';
 
 const ATTACHMENT_KIND_ICON: Record<string, string> = {
   image: '🖼',
@@ -101,6 +102,33 @@ const effectiveCwd = computed(() => ((props.todo.working_directory ?? '') || def
 const canRun = computed(() => !running.value && effectiveCwd.value.length > 0 && prompt.value.trim().length > 0);
 const canSend = computed(() => running.value && !turnActive.value && followup.value.trim().length > 0);
 
+// ─── Sandbox run state ──────────────────────────────────────────────────────
+// One sandbox run per todo at a time (M2 enforces this server-side). The UI
+// gate keeps the button disabled until the user has both a linked GitHub
+// source_ref AND a configured github PAT — the server will 400 otherwise.
+const githubIntegration = ref<Integration | null>(null);
+const sandboxBusy = ref(false);
+
+const sandboxStatus = computed(() => (props.todo.sandbox_status ?? 'idle'));
+const sandboxRunning = computed(() =>
+  sandboxStatus.value === 'queued' || sandboxStatus.value === 'running',
+);
+const hasGithubToken = computed(() => !!githubIntegration.value?.hasToken);
+const canSandbox = computed(
+  () =>
+    canRun.value &&
+    !!props.todo.source_ref &&
+    props.todo.source === 'github' &&
+    hasGithubToken.value,
+);
+const sandboxTooltip = computed(() => {
+  if (!props.todo.source_ref || props.todo.source !== 'github') {
+    return 'Sandbox benötigt ein verknüpftes GitHub-Repo';
+  }
+  if (!hasGithubToken.value) return 'Sandbox benötigt ein verknüpftes GitHub-Repo';
+  return '';
+});
+
 function buildDefaultPrompt(todo: Todo): string {
   const parts: string[] = [];
   parts.push(`Task: ${todo.title}`);
@@ -147,6 +175,13 @@ function subscribe() {
     session.value = data;
     output.value = data.output;
     scrollOutputToEnd();
+    // Sandbox runs finish on the shared pipe too — refetch so the board card
+    // moves to Prüfstand (status='test') once the server has set
+    // sandbox_status='pushed'. Cheap compared to the full-page stream; only
+    // fires at end-of-run.
+    if (sandboxRunning.value) {
+      void todosStore.fetchAll();
+    }
   });
 
   eventSource.addEventListener('turn-end', (ev) => {
@@ -243,6 +278,15 @@ async function loadSnippetCount() {
   }
 }
 
+async function loadGithubIntegration() {
+  try {
+    const rows = await api.integrations.list();
+    githubIntegration.value = rows.find((i) => i.provider === 'github') ?? null;
+  } catch {
+    /* non-fatal — sandbox button will just stay disabled */
+  }
+}
+
 onMounted(async () => {
   try {
     const settings = await api.settings.getAll();
@@ -252,6 +296,7 @@ onMounted(async () => {
   await loadAttachments();
   await loadAnalysisCount();
   await loadSnippetCount();
+  await loadGithubIntegration();
 });
 
 onUnmounted(unsubscribe);
@@ -343,6 +388,59 @@ async function stop() {
     session.value = res.session;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+async function runSandbox() {
+  if (!canSandbox.value || sandboxBusy.value) return;
+  error.value = null;
+  sandboxBusy.value = true;
+  try {
+    // 1) Idempotent: persist branch_name the first time the user clicks. The
+    //    server would derive the same name, but carrying it on the todo gives
+    //    the user a stable preview in the detail view from now on.
+    if (!props.todo.branch_name || !props.todo.branch_name.trim()) {
+      const derived = computeAgentBranchName(props.todo);
+      try {
+        await todosStore.update(props.todo.id, { branch_name: derived });
+      } catch {
+        /* non-fatal — server will derive the same value on start */
+      }
+    }
+    // 2) Optimistic: mark queued so the button flips immediately.
+    todosStore._updateLocal(props.todo.id, { sandbox_status: 'queued' });
+    // 3) Kick off the run. Output lands on the shared SSE pipe via
+    //    registerExternalSession — no extra subscription needed.
+    output.value = '';
+    const ids = [...selectedAttachmentIds.value];
+    await api.sandbox.start(props.todo.id, {
+      prompt: prompt.value,
+      attachmentIds: ids,
+      includeAnalyses: includeAnalyses.value,
+      includeSnippets: includeSnippets.value,
+    });
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+    // Rollback the optimistic status — the run never actually entered the queue.
+    todosStore._updateLocal(props.todo.id, { sandbox_status: 'idle' });
+  } finally {
+    sandboxBusy.value = false;
+  }
+}
+
+async function stopSandbox() {
+  if (!confirm('Laufende Sandbox wirklich beenden?')) return;
+  error.value = null;
+  sandboxBusy.value = true;
+  try {
+    await api.sandbox.stop(props.todo.id);
+    // Let the SSE `end` event + fetchAll settle the final status — don't
+    // optimistically flip to 'failed' here because the server may record
+    // the stop as a partial push.
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    sandboxBusy.value = false;
   }
 }
 
@@ -822,6 +920,22 @@ const statusBadge = computed(() => {
       <button v-if="!running && turnCount === 0" class="primary" :disabled="!canRun" @click="run">
         ▶ Run Claude
       </button>
+      <button
+        v-if="!running && turnCount === 0 && !sandboxRunning"
+        class="primary"
+        :disabled="!canSandbox || sandboxBusy"
+        :title="sandboxTooltip || 'Sandbox-Lauf auf lp03 starten (pusht Draft-PR bei Erfolg)'"
+        @click="runSandbox"
+      >
+        🐳 In Sandbox starten
+      </button>
+      <button
+        v-if="sandboxRunning"
+        class="warn"
+        :disabled="sandboxBusy"
+        title="Laufende Sandbox stoppen"
+        @click="stopSandbox"
+      >■ Sandbox stoppen</button>
       <button
         v-if="!running && turnCount === 0"
         class="ghost"
