@@ -225,6 +225,74 @@ const newMapping = ref<{ source: RepoMappingSource; key: string; local_path: str
   local_path: '',
 });
 
+// Known project keys from Jira, harvested from existing todos so the user
+// can pick from a dropdown instead of typing `AAR` by hand. GitHub repos come
+// straight from the integration config above.
+const knownJiraKeys = ref<string[]>([]);
+async function loadKnownJiraKeys() {
+  try {
+    const todos = await api.todos.list();
+    const keys = new Set<string>();
+    for (const t of todos) {
+      if (t.source === 'jira' && t.source_ref) {
+        const m = t.source_ref.match(/^([A-Za-z][A-Za-z0-9_]*)-\d+$/);
+        if (m) keys.add(m[1].toUpperCase());
+      }
+    }
+    knownJiraKeys.value = Array.from(keys).sort();
+  } catch {
+    knownJiraKeys.value = [];
+  }
+}
+onMounted(loadKnownJiraKeys);
+
+// Repos configured in the GitHub integration — used to populate the key
+// dropdown in the new-mapping form. Already-mapped repos are filtered out so
+// the user doesn't try to create a duplicate (which would 409 on the backend).
+const configuredGithubRepos = computed<string[]>(() => {
+  const cfg = github.value?.config as GitHubConfig | undefined;
+  return cfg?.repos ?? [];
+});
+const availableKeysForNewMapping = computed<string[]>(() => {
+  const mappedKeys = new Set(
+    repoMappings.value
+      .filter((m) => m.source === newMapping.value.source)
+      .map((m) => m.key),
+  );
+  const pool = newMapping.value.source === 'github'
+    ? configuredGithubRepos.value
+    : knownJiraKeys.value;
+  return pool.filter((k) => !mappedKeys.has(k));
+});
+
+// Opens the native OS folder dialog on the backend host (which is the user's
+// own machine in this local-only deployment). The backend spawns a PowerShell
+// FolderBrowserDialog on Windows and returns the chosen absolute path.
+const pickerBusy = ref(false);
+
+async function pickFolder(initial: string): Promise<string | null> {
+  pickerBusy.value = true;
+  try {
+    const { path } = await api.fs.pickFolder(initial);
+    return path;
+  } catch (e) {
+    flashMsg('err', e instanceof Error ? e.message : String(e));
+    return null;
+  } finally {
+    pickerBusy.value = false;
+  }
+}
+
+async function pickForNew() {
+  const p = await pickFolder(newMapping.value.local_path);
+  if (p) newMapping.value.local_path = p;
+}
+
+async function pickForExisting(m: RepoMapping) {
+  const p = await pickFolder(m.local_path);
+  if (p) m.local_path = p;
+}
+
 async function loadRepoMappings() {
   repoMappingsLoading.value = true;
   try {
@@ -310,9 +378,10 @@ Beschreibung:
 {{todos_list}}
 
 ## Arbeitsweise
-1. Plane die Umsetzung in kleine Schritte und lege sie als Subtasks an (mcp__werkbank__add_subtask).
-2. Arbeite die Subtasks ab und hake jeden Schritt ab, sobald er erledigt ist (mcp__werkbank__update_subtask mit done=true).
-3. Wenn du fertig bist, rufe mcp__werkbank__finalize_todo mit einer kurzen Zusammenfassung der Ergebnisse auf. Setze next_status auf "test" wenn Review nötig ist, sonst "done".
+1. Rufe **zuerst** mcp__werkbank__get_todo mit der oben genannten Todo-ID auf, um den aktuellen Stand der Aufgabe inklusive aller Subtasks live aus der Werkbank zu laden. Der Subtask-Block oben ist nur ein Snapshot vom Session-Start — er kann zwischenzeitlich ergänzt, umbenannt oder abgehakt worden sein. Arbeite grundsätzlich mit dem frisch geladenen Stand.
+2. Prüfe die geladenen Subtasks. Decken sie die Aufgabe vollständig ab? Sind sie ausreichend, arbeite sie direkt ab. Fehlen Schritte oder existieren noch keine, ergänze sie via mcp__werkbank__add_subtask, bevor du mit der Umsetzung beginnst.
+3. Arbeite die Subtasks nacheinander ab und hake jeden Schritt ab, sobald er erledigt ist (mcp__werkbank__update_subtask mit done=true). Bei längeren Sessions rufe zwischendurch erneut mcp__werkbank__get_todo auf, damit du nicht an veralteten Subtasks arbeitest.
+4. Wenn du fertig bist, rufe mcp__werkbank__finalize_todo mit einer kurzen Zusammenfassung der Ergebnisse auf. Setze next_status auf "test" wenn Review nötig ist, sonst "done".
 
 ## User-Prompt
 {{user_prompt}}
@@ -483,7 +552,16 @@ const tabs: { id: TabId; label: string }[] = [
         </label>
         <label class="stacked">
           <span>{{ newMapping.source === 'github' ? 'Repo (owner/name)' : 'Projektkey (z.B. AAR)' }}</span>
+          <select
+            v-if="availableKeysForNewMapping.length > 0"
+            v-model="newMapping.key"
+            required
+          >
+            <option value="" disabled>— auswählen —</option>
+            <option v-for="k in availableKeysForNewMapping" :key="k" :value="k">{{ k }}</option>
+          </select>
           <input
+            v-else
             v-model="newMapping.key"
             type="text"
             :placeholder="newMapping.source === 'github' ? 'HausPerfekt/HausPerfekt.Mobile.Sync' : 'AAR'"
@@ -492,12 +570,16 @@ const tabs: { id: TabId; label: string }[] = [
         </label>
         <label class="stacked">
           <span>Lokaler Pfad</span>
-          <input
-            v-model="newMapping.local_path"
-            type="text"
-            placeholder="D:\BBA\HausPerfekt.Mobile.Sync"
-            required
-          />
+          <div style="display: flex; gap: 0.3rem;">
+            <input
+              v-model="newMapping.local_path"
+              type="text"
+              placeholder="D:\BBA\HausPerfekt.Mobile.Sync"
+              required
+              style="flex: 1; font-family: var(--font-mono); font-size: 0.85rem;"
+            />
+            <button type="button" class="ghost" :disabled="pickerBusy" @click="pickForNew" title="Ordner durchsuchen">📁</button>
+          </div>
         </label>
         <button
           type="submit"
@@ -505,6 +587,12 @@ const tabs: { id: TabId; label: string }[] = [
           :disabled="repoMappingBusy || !newMapping.key.trim() || !newMapping.local_path.trim()"
         >+ Anlegen</button>
       </form>
+      <p v-if="newMapping.source === 'github' && configuredGithubRepos.length === 0" style="margin-top: 0.5rem; font-size: 0.8rem; color: var(--fg-muted);">
+        Noch keine GitHub-Repos konfiguriert — trag sie zuerst im Tab „🔌 Verbindungen" ein.
+      </p>
+      <p v-else-if="availableKeysForNewMapping.length === 0" style="margin-top: 0.5rem; font-size: 0.8rem; color: var(--fg-muted);">
+        Alle {{ newMapping.source === 'github' ? 'Repos' : 'Projekte' }} sind bereits gemappt.
+      </p>
 
       <div v-if="repoMappingsLoading" style="margin-top: 0.75rem; color: var(--fg-muted);">Lade…</div>
       <div v-else-if="repoMappings.length === 0" style="margin-top: 0.75rem; color: var(--fg-muted);">
@@ -515,7 +603,7 @@ const tabs: { id: TabId; label: string }[] = [
           v-for="m in repoMappings"
           :key="m.id"
           class="repo-mapping-item"
-          style="display: grid; grid-template-columns: 140px 1fr 2fr auto auto; gap: 0.5rem; align-items: center; padding: 0.55rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev);"
+          style="display: grid; grid-template-columns: 140px 1fr 2fr auto auto auto; gap: 0.5rem; align-items: center; padding: 0.55rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev);"
         >
           <select v-model="m.source">
             <option value="github">GitHub</option>
@@ -523,6 +611,7 @@ const tabs: { id: TabId; label: string }[] = [
           </select>
           <input v-model="m.key" type="text" />
           <input v-model="m.local_path" type="text" style="font-family: var(--font-mono); font-size: 0.85rem;" />
+          <button class="ghost" :disabled="pickerBusy" @click="pickForExisting(m)" title="Ordner durchsuchen">📁</button>
           <button class="ghost" @click="updateRepoMapping(m)" title="Speichern">💾</button>
           <button class="danger" @click="deleteRepoMapping(m)">Löschen</button>
         </li>
@@ -612,6 +701,8 @@ const tabs: { id: TabId; label: string }[] = [
         <code>{{todo_description}}</code>,
         <code>{{todo_status}}</code>,
         <code>{{subtasks}}</code>,
+        <code>{{snippets}}</code>,
+        <code>{{analyses}}</code>,
         <code>{{todos_list}}</code>,
         <code>{{user_prompt}}</code>.
       </p>
@@ -629,6 +720,7 @@ const tabs: { id: TabId; label: string }[] = [
     <p style="color: var(--fg-muted); font-size: 0.85rem; margin-top: 1.5rem;">
       Tokens werden AES-256-GCM-verschlüsselt in SQLite abgelegt und verlassen das Backend nie. Im Frontend erscheinen sie nur maskiert.
     </p>
+
   </div>
 </template>
 
@@ -679,4 +771,5 @@ const tabs: { id: TabId; label: string }[] = [
   background: var(--bg-elev);
   border-color: var(--accent-2);
 }
+
 </style>

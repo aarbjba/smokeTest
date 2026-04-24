@@ -56,6 +56,7 @@ button:active { transform: translateY(1px); }
 button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 button.primary:hover { filter: brightness(1.1); }
 button.danger  { background: transparent; color: var(--danger); border-color: var(--danger); }
+button.warn    { background: transparent; color: var(--warning); border-color: var(--warning); }
 button.ghost   { background: transparent; border-color: transparent; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 

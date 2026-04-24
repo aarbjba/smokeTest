@@ -175,7 +175,7 @@ export const useTodosStore = defineStore('todos', {
       catch (e) { this.error = e instanceof Error ? e.message : String(e); }
       finally { this.loading = false; }
     },
-    async create(data: Partial<Todo>) {
+    async create(data: Partial<Todo> & { subtasks?: string[] }) {
       const created = await api.todos.create(data);
       this.items.unshift(created);
       return created;

@@ -10,6 +10,7 @@ const StartSchema = z.object({
   attachmentIds: z.array(z.number().int().positive()).max(100).optional(),
   mode: z.enum(['work', 'analyse']).optional().default('work'),
   includeAnalyses: z.boolean().optional().default(false),
+  includeSnippets: z.boolean().optional().default(false),
 });
 
 const SendSchema = z.object({
@@ -55,7 +56,15 @@ agentRouter.post('/session/:todoId/start', (req, res) => {
   const todoId = Number(req.params.todoId);
   const data = StartSchema.parse(req.body);
   try {
-    const session = claudeSessions.start(todoId, data.prompt, data.cwd, data.attachmentIds ?? [], data.mode, data.includeAnalyses);
+    const session = claudeSessions.start(
+      todoId,
+      data.prompt,
+      data.cwd,
+      data.attachmentIds ?? [],
+      data.mode,
+      data.includeAnalyses,
+      data.includeSnippets,
+    );
     res.status(201).json({ session: sessionSnapshot(session) });
   } catch (err) {
     const status = (err as { status?: number })?.status ?? 500;
@@ -80,6 +89,28 @@ agentRouter.post('/session/:todoId/send', (req, res) => {
 agentRouter.post('/session/:todoId/stop', (req, res) => {
   const todoId = Number(req.params.todoId);
   const session = claudeSessions.stop(todoId);
+  res.json({ session: sessionSnapshot(session) });
+});
+
+/**
+ * Nuclear kill — tree-terminates claude + all descendants (MCP, sub-shells).
+ * Functionally the same code path as /stop today but semantically explicit
+ * in the UI: "make absolutely sure nothing is still running".
+ */
+agentRouter.post('/session/:todoId/kill', (req, res) => {
+  const todoId = Number(req.params.todoId);
+  const session = claudeSessions.kill(todoId);
+  res.json({ session: sessionSnapshot(session) });
+});
+
+/**
+ * Soft interrupt — aborts the current turn WITHOUT destroying the session.
+ * Uses `claude --resume <sessionId>` under the hood to keep context.
+ * Follow up with POST /session/:todoId/send to redirect the agent.
+ */
+agentRouter.post('/session/:todoId/interrupt', (req, res) => {
+  const todoId = Number(req.params.todoId);
+  const session = claudeSessions.interrupt(todoId);
   res.json({ session: sessionSnapshot(session) });
 });
 
