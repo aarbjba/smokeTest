@@ -87,10 +87,19 @@ Co-authored-by: ${GIT_AUTHOR_NAME} <${GIT_AUTHOR_EMAIL}>"
 fi
 
 # --- did anything actually happen? ---
+# Every status line is also echoed to stdout on its own line so the werkbank
+# runner can cache it from the log stream (cachedStatusLine fallback) when
+# --rm deletes the status file before `docker cp` can read it. The regex in
+# sandbox-runner.ts is `^\s*\{\s*"status"\s*:` — keep these lines on their own
+# with no prefix so they match.
+emit_status() {
+  printf '%s\n' "$1"
+  printf '%s' "$1" > "$STATUS_FILE"
+}
 git fetch origin "$BASE_BRANCH":"$BASE_BRANCH" 2>/dev/null || true
 NEW_COMMITS=$(git rev-list --count "${BASE_BRANCH}..HEAD" 2>/dev/null || echo 0)
-[[ "$NEW_COMMITS" == "0" ]] && { echo '{"status":"no_changes"}' > "$STATUS_FILE"; exit 2; }
-[[ "$CLAUDE_EXIT" -ne 0 ]] && { echo '{"status":"claude_error"}' > "$STATUS_FILE"; exit 3; }
+[[ "$NEW_COMMITS" == "0" ]] && { emit_status '{"status":"no_changes"}'; exit 2; }
+[[ "$CLAUDE_EXIT" -ne 0 ]] && { emit_status '{"status":"claude_error"}'; exit 3; }
 
 # --- test gate ---
 TEST_CMD_EFFECTIVE="${TEST_CMD:-}"
@@ -103,12 +112,12 @@ if [[ -z "$TEST_CMD_EFFECTIVE" ]]; then
 fi
 
 if [[ -z "$TEST_CMD_EFFECTIVE" ]]; then
-  echo '{"status":"no_test"}' > "$STATUS_FILE"
+  emit_status '{"status":"no_test"}'
   exit 5
 fi
 
 if ! bash -c "$TEST_CMD_EFFECTIVE"; then
-  echo '{"status":"tests_failed"}' > "$STATUS_FILE"
+  emit_status '{"status":"tests_failed"}'
   exit 4
 fi
 
@@ -124,5 +133,6 @@ ${TODO_TEXT}
 Task-ID: \`${TASK_ID}\`
 Werkbank-ID: \`${TODO_ID}\`" 2>&1 | tail -n1)
 
-printf '{"status":"pushed","pr_url":%s}\n' "$(jq -Rn --arg u "$PR_URL" '$u')" > "$STATUS_FILE"
+PUSHED_JSON=$(printf '{"status":"pushed","pr_url":%s}' "$(jq -Rn --arg u "$PR_URL" '$u')")
+emit_status "$PUSHED_JSON"
 exit 0

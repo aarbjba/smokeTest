@@ -419,6 +419,10 @@ async function runSandbox() {
       includeAnalyses: includeAnalyses.value,
       includeSnippets: includeSnippets.value,
     });
+    // 4) Server has now written sandbox_status='running' to the DB. Refetch so
+    //    the chip reflects the real server state instead of whatever stale
+    //    value the store carried over from a previous run.
+    void todosStore.fetchAll();
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
     // Rollback the optimistic status — the run never actually entered the queue.

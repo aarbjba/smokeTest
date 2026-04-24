@@ -227,8 +227,20 @@ export async function startSandboxRun(
   prompt: string,
   opts: SandboxStartOpts = {},
 ): Promise<{ runId: string; queued: boolean }> {
-  if (activeRuns.has(todoId) || claudeSessions.has(todoId)) {
+  // Reject only if there's an actively-running session. A terminal session
+  // (exited / error) left in the store from a previous run must NOT block a
+  // fresh start — auto-clear it. Without this, every completed sandbox run
+  // leaves a dead session that 409s the next start until the user manually
+  // clicks "Clear".
+  if (activeRuns.has(todoId)) {
     throw Object.assign(new Error('A session is already running for this todo.'), { status: 409 });
+  }
+  if (claudeSessions.has(todoId)) {
+    const existing = claudeSessions.get(todoId);
+    if (existing && existing.status === 'running') {
+      throw Object.assign(new Error('A session is already running for this todo.'), { status: 409 });
+    }
+    claudeSessions.clear(todoId);
   }
 
   const todo = loadTodo(todoId);
@@ -834,8 +846,14 @@ async function pollContainerExit(ctx: string, containerName: string): Promise<nu
       containerName,
     ]);
     if (r.status !== 0) {
-      // Container already gone (`--rm` fired) — no code to recover. Treat as 0.
-      return 0;
+      // Container is gone (`--rm` fired) — we cannot recover the exit code.
+      // Return -1 so mapExitToStatus treats it as failure UNLESS the caller
+      // has a cached status line from the log stream (which wins over the
+      // exit code). NEVER default to 0 here: a `--rm`-ed crashed container
+      // and a `--rm`-ed successful container look identical from inspect,
+      // but defaulting to 0 silently marks every torn-down container as
+      // "pushed".
+      return -1;
     }
     const [state, codeRaw] = r.stdout.trim().split('|');
     const code = Number(codeRaw);
@@ -891,10 +909,37 @@ function recoverStatusPayload(
   return null;
 }
 
+// status.json values the entrypoint writes. Map to the internal sandbox_status
+// enum; unknown values collapse to 'failed' to avoid storing forged strings.
+function mapPayloadStatus(
+  s: string | undefined,
+): { status: string; detail?: string } | null {
+  switch (s) {
+    case 'pushed':       return { status: 'pushed' };
+    case 'no_changes':   return { status: 'no_changes' };
+    case 'no_test':      return { status: 'no_test' };
+    case 'tests_failed': return { status: 'failed', detail: 'tests failed' };
+    case 'claude_error': return { status: 'failed', detail: 'claude error' };
+    default:             return null;
+  }
+}
+
 function mapExitToStatus(
   exitCode: number,
   payload: StatusPayload | null,
 ): { status: string; prUrl?: string; detail?: string } {
+  // When the entrypoint's status payload is recoverable (via `docker cp`
+  // status.json OR the cached stdout line) it is ground truth — prefer it
+  // over the exit-code mapping. A `--rm`-ed container can make the exit
+  // code unreadable, but the payload travels in the log stream and survives.
+  if (payload?.status) {
+    const mapped = mapPayloadStatus(payload.status);
+    if (mapped) {
+      return mapped.status === 'pushed'
+        ? { ...mapped, prUrl: payload.pr_url }
+        : mapped;
+    }
+  }
   switch (exitCode) {
     case 0:
       return { status: 'pushed', prUrl: payload?.pr_url };
