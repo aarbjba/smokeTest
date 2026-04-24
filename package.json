@@ -11,7 +11,7 @@
     "dev": "concurrently -n api,web -c blue,green \"npm -w apps/api run dev\" \"npm -w apps/web run dev\"",
     "build": "npm -w apps/api run build && npm -w apps/web run build && npm -w apps/mcp run build",
     "mcp": "npm -w apps/mcp run start",
-    "sandbox:build": "docker --context ${DOCKER_CONTEXT:-lp03} build -t werkbank-sandbox:latest docker/sandbox",
+    "sandbox:build": "docker --context lp03 build -t werkbank-sandbox:latest docker/sandbox",
     "start": "npm -w apps/api run start",
     "install:all": "npm install",
     "kill-dev": "node scripts/free-ports.mjs 3001 5173 5174 5175"
