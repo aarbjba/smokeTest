@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import type { TaskType, TodoSource } from '../types';
+import { computeAgentBranchName } from '../utils/branchName';
 
 const props = defineProps<{
   title: string;
@@ -9,6 +10,11 @@ const props = defineProps<{
   sourceRef?: string | null;
   tags?: string[];
   taskType?: TaskType;
+  // Sandbox mode short-circuits the feature/bugfix/chore heuristic and instead
+  // emits `agent/<todoId>-<slug>` via the shared computeAgentBranchName helper
+  // — the detail view's "Sandbox-Lauf" section uses this to preview the name
+  // the sandbox runner will push to GitHub.
+  sandboxMode?: boolean;
 }>();
 
 /**
@@ -77,6 +83,17 @@ function stripJiraKeyPrefix(title: string, key: string): string {
 }
 
 const branchName = computed(() => {
+  // Sandbox mode: delegate to the shared helper so the server-side derivation
+  // and every UI surface agree on the same name.
+  if (props.sandboxMode) {
+    return computeAgentBranchName({
+      id: props.todoId ?? 0,
+      title: props.title ?? '',
+      source: props.source ?? 'local',
+      source_ref: props.sourceRef ?? null,
+    });
+  }
+
   const prefix = pickPrefix();
   const title = props.title ?? '';
 
