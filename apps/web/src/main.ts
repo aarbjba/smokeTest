@@ -6,6 +6,7 @@ import BoardView from './views/BoardView.vue';
 import SettingsView from './views/SettingsView.vue';
 import TodoDetailView from './views/TodoDetailView.vue';
 import PapierkorbView from './views/PapierkorbView.vue';
+import PendingView from './views/PendingView.vue';
 import { useSettingsStore } from './stores/settings';
 import './styles/themes.css';
 import './styles/app.css';
@@ -16,6 +17,7 @@ const router = createRouter({
     { path: '/', name: 'board', component: BoardView },
     { path: '/todo/new', name: 'todo-new', component: TodoDetailView, props: { id: 'new' } },
     { path: '/todo/:id', name: 'todo', component: TodoDetailView, props: true },
+    { path: '/pending', name: 'pending', component: PendingView },
     { path: '/papierkorb', name: 'papierkorb', component: PapierkorbView },
     { path: '/settings', name: 'settings', component: SettingsView },
   ],

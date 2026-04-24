@@ -90,6 +90,7 @@ onUnmounted(() => {
       <div class="brand"><span class="anvil">🛠</span> Werkbank</div>
       <nav>
         <RouterLink to="/">Board</RouterLink>
+        <RouterLink to="/pending">📥 Pendliste</RouterLink>
         <RouterLink to="/papierkorb">🗑 Papierkorb</RouterLink>
         <RouterLink to="/settings">Einstellungen</RouterLink>
       </nav>
