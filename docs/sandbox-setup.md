@@ -8,8 +8,40 @@ Run the sections in order. Everything here is idempotent; re-running a block is 
 
 ## On `lp03.uts`
 
+First check what's already installed — if `containerd.io` is present you must use the Docker-official `docker-ce` packages, not `docker.io` from the Ubuntu repos (they conflict):
+
 ```bash
-sudo apt install openssh-server docker.io iptables
+dpkg -l | grep -E 'docker|containerd'
+```
+
+### Install Docker (official repo)
+
+```bash
+# openssh + firewall persistence (always safe to install)
+sudo apt install -y openssh-server iptables-persistent
+
+# Docker official repo setup (skip if docker-ce is already installed)
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Docker engine + CLI + buildx + compose plugin
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+sudo systemctl enable --now docker
+docker version                                 # sanity
+```
+
+If you're on a non-Ubuntu derivative, swap `ubuntu` for `debian` in the repo URL and keyring path.
+
+### User, SSH, firewall, cron
+
+```bash
 sudo useradd -m -G docker werkbank             # if missing
 sudo mkdir -p /home/werkbank/.ssh
 # paste the VM's SSH pubkey into /home/werkbank/.ssh/authorized_keys
@@ -19,12 +51,14 @@ sudo chmod 600 /home/werkbank/.ssh/authorized_keys
 
 # host-level block of cloud metadata IP (harmless on-prem, cheap safety)
 sudo iptables -I DOCKER-USER 1 -d 169.254.169.254 -j REJECT
-# persist: apt install iptables-persistent && netfilter-persistent save
+sudo netfilter-persistent save
 
 # weekly housekeeping cron
 echo '0 4 * * 0 root docker system prune -af --filter "until=168h"' \
   | sudo tee /etc/cron.d/werkbank-sandbox-prune
 ```
+
+> **Warning about the `docker` group.** Membership in `docker` is root-equivalent — the `werkbank` user can mount arbitrary host paths into a container and escalate. This is acceptable for the isolated sandbox use case on a dedicated host like `lp03.uts`, but never grant it to shared users on a multi-tenant box.
 
 ---
 
@@ -97,6 +131,8 @@ Expected: pulls the image on lp03, prints the hello-world banner, exits 0. `dock
 11. **SSH host-key TOFU.** `docker --context lp03` fails cryptically without a `known_hosts` entry. Do one manual `ssh werkbank@lp03.uts` first to seed it — this runbook covers that in the VM section above.
 
 12. **SSO-protected orgs.** Classic PAT needs "Enable SSO for this token" clicked in the GitHub UI. See the GitHub token section above.
+
+13. **`docker.io` vs `docker-ce` / `containerd.io`.** On hosts where `containerd.io` from Docker's official repo is already installed (e.g. because someone tried `docker-ce` first, or an orchestrator dropped it there), installing the Ubuntu `docker.io` meta-package pulls the conflicting `containerd` and breaks the install. Always prefer `docker-ce + docker-ce-cli + containerd.io` from `download.docker.com` as documented in the install section above. Run `dpkg -l | grep -E 'docker|containerd'` first to see what's there.
 
 ---
 
