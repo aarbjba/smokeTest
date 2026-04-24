@@ -1,0 +1,683 @@
+# Ephemeral Docker Sandboxes for Autonomous Claude Code Agents — A Minimalist Stack
+
+A concrete, opinionated guide to running 2–5 parallel, ephemeral Claude Code agents on a single cloud VM (Hetzner/AWS/GCP), each cloning a repo, branching off `develop`, implementing a TODO, pushing, and cleaning up — with the smallest image and lightest orchestrator possible.
+
+---
+
+## 1. Minimal Base Image — pick `node:20-slim` (or `node:22-slim`)
+
+### Size comparison (amd64, decompressed)
+
+| Image | Decompressed size | Notes |
+|---|---|---|
+| `node:20` (bookworm) | ~1.12 GB | buildpack-deps, avoid [Source](https://dev.to/ptuladhar3/avoid-using-bloated-nodejs-docker-image-in-production-3doc) |
+| `node:20-slim` (bookworm-slim) | **~220–240 MB** | Debian slim, glibc [Source](https://dev.to/ptuladhar3/avoid-using-bloated-nodejs-docker-image-in-production-3doc) |
+| `node:20-alpine` | ~153 MB | musl libc — **breaks Claude Code** [Source](https://github.com/anthropics/claude-code/issues/29559) |
+| `node:20-bookworm-slim` (scanned) | ~71 MB compressed / ~220 MB decomp. | [Source](https://snyk.io/advisor/docker/node/20.19) |
+| distroless node | ~177 MB | no shell → cannot run `git`, `gh` [Source](https://snyk.io/blog/choosing-the-best-node-js-docker-image/) |
+| chainguard/node | small but rolling tag only | [Source](https://snyk.io/blog/choosing-the-best-node-js-docker-image/) |
+
+### Why `node:20-slim` (Debian bookworm-slim) wins for this workload
+
+- **Alpine is a trap here.** Claude Code v2.1.63+ started using the glibc-specific symbol `posix_getdents`, so the binary fails on Alpine with `Error relocating .../claude: posix_getdents: symbol not found` even with `gcompat` [Source](https://github.com/anthropics/claude-code/issues/29559). Anthropic's own Alpine docs require `apk add libgcc libstdc++ ripgrep` plus `USE_BUILTIN_RIPGREP=0`, and it still breaks on new releases [Source](https://github.com/anthropics/claude-code/issues/18966).
+- **Distroless** has no `/bin/sh`, so `git`, `gh`, test runners, and entrypoint scripts won't work.
+- **Anthropic's own reference `.devcontainer/Dockerfile` uses `FROM node:20`** (full Debian), not slim, but you don't need most of what it installs (zsh, powerline10k, delta) for a headless job [Source](https://github.com/anthropics/claude-code/blob/main/.devcontainer/Dockerfile).
+- Claude Code is **officially Node.js 18+** for the npm install path [Source](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code). Node 20 LTS or 22 LTS are the safe choices.
+
+### Final recommendation: `node:22-slim` + only what you need
+
+This yields a finished image around **260–320 MB** depending on whether you also bake in `gh`. That is as small as you can safely go for Claude Code + git + gh + tests today.
+
+---
+
+## 2. Claude Code CLI in Docker — what Anthropic says
+
+### Official guidance
+
+- Anthropic publishes a **reference devcontainer** at [`anthropics/claude-code/.devcontainer`](https://github.com/anthropics/claude-code/tree/main/.devcontainer), consisting of `devcontainer.json`, `Dockerfile`, and `init-firewall.sh`, specifically designed so you can safely use `claude --dangerously-skip-permissions` [Source](https://code.claude.com/docs/en/devcontainer).
+- Anthropic explicitly says: *"The container's enhanced security measures (isolation and firewall rules) allow you to run `claude --dangerously-skip-permissions` to bypass permission prompts for unattended operation"* and *"We recommend only using devcontainers when developing with trusted repositories"* [Source](https://code.claude.com/docs/en/devcontainer).
+- The package name is `@anthropic-ai/claude-code` (npm install is still supported, though Anthropic now markets a native installer as the default method) [Source](https://www.npmjs.com/package/@anthropic-ai/claude-code) [Source](https://code.claude.com/docs/en/setup).
+
+### Key environment variables
+
+| Variable | Purpose |
+|---|---|
+| `ANTHROPIC_API_KEY` | API-key auth. **Only `claude -p` mode honors this on headless Linux**; interactive mode requires prior OAuth login [Source](https://github.com/anthropics/claude-code/issues/27900). |
+| `CLAUDE_CODE_USE_BEDROCK=0` / `CLAUDE_CODE_USE_VERTEX=0` | Explicitly force direct Anthropic API |
+| `GITHUB_TOKEN` / `GH_TOKEN` | Used by `gh` CLI and for git HTTPS auth |
+| `DEVCONTAINER=true` | Hint used by Anthropic's reference image |
+
+### Headless invocation (the mode you want)
+
+```bash
+claude -p "$TODO_TEXT" \
+  --permission-mode bypassPermissions \
+  --output-format stream-json \
+  --verbose \
+  --max-turns 40 \
+  --model claude-sonnet-4-5
+```
+
+- `-p` / `--print` runs non-interactively and exits [Source](https://docs.anthropic.com/en/docs/claude-code/sdk/sdk-headless).
+- `--dangerously-skip-permissions` is equivalent to permission-mode `bypassPermissions`; Anthropic calls it "Safe YOLO mode" and says it is **only appropriate inside a sandbox** [Source](https://blog.promptlayer.com/claude-dangerously-skip-permissions/) [Source](https://www.truefoundry.com/blog/claude-code-dangerously-skip-permissions).
+- Permission modes: `default`, `plan`, `acceptEdits`, `bypassPermissions`. For an **autonomous ephemeral sandbox, use `bypassPermissions`** (or the legacy `--dangerously-skip-permissions` flag) [Source](https://code.claude.com/docs/en/permissions).
+- `--output-format` options are `text` / `json` / `stream-json`. Use `stream-json` + `--verbose` if you want live progress; use `json` for a single parseable blob [Source](https://awesomeclaude.ai/code-cheatsheet).
+- `--max-turns N` caps the agent loop; Claude returns exit code 0 on success and a non-zero exit on hard failure (e.g. `error_max_turns` still exits 0 with JSON `subtype: "error_max_turns"`, so check the JSON, not just exit code) [Source](https://institute.sfeir.com/en/claude-code/claude-code-headless-mode-autonomous-agents-2) [Source](https://github.com/anthropics/claude-code/issues/3286).
+- The prompt can be passed as an arg or piped to stdin: `echo "$TODO" | claude -p` [Source](https://awesomeclaude.ai/code-cheatsheet).
+
+### Claude handles git by itself
+
+In headless bypass mode Claude will happily run `git add`, `git commit`, and even `gh pr create`. The pragmatic pattern is to let Claude do the commits (it writes good messages) but have your entrypoint do the final `git push` and `gh pr create` so you can deterministically capture the URL [Source](https://anthropic.com/engineering/building-c-compiler).
+
+### Clean exit
+
+`claude -p ...` exits on its own when it believes the task is complete. Add `--max-turns` as a hard ceiling so a stuck loop can't run forever. Check exit code + parse the JSON `subtype` (`success`, `error_max_turns`, `error_during_execution`) [Source](https://github.com/anthropics/claude-code/issues/3286).
+
+---
+
+## 3. GitHub Authentication — minimum scope, no leaks
+
+### The token-in-URL pattern (simplest, works everywhere)
+
+```bash
+git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${OWNER}/${REPO}.git" /workspace/repo
+```
+
+GitHub treats the username portion as a placeholder; `x-access-token` is a convention used for GitHub App installation tokens but **any non-empty username works — the password slot is what matters** [Source](https://github.com/orgs/community/discussions/173881).
+
+### Cleaner pattern: credential helper + bare remote URL
+
+The problem with embedding the token in the URL is that it ends up in `.git/config`, in every `git remote -v`, and can leak into logs. Better:
+
+```bash
+git config --global credential.helper store
+printf "https://x-access-token:%s@github.com\n" "$GITHUB_TOKEN" > ~/.git-credentials
+chmod 600 ~/.git-credentials
+git clone "https://github.com/${OWNER}/${REPO}.git" /workspace/repo
+```
+
+Since the whole container is ephemeral and deleted on exit (`--rm`), "storing" credentials inside it is equivalent to passing them via env var — they die with the container. Also export `GIT_TERMINAL_PROMPT=0` so git never hangs waiting for a password prompt on bad auth.
+
+For `gh` CLI:
+
+```bash
+export GH_TOKEN="$GITHUB_TOKEN"   # gh auto-picks this up; no `gh auth login` needed
+```
+
+### Minimum token scopes
+
+**Fine-grained PAT (recommended)** on the target repo [Source](https://github.com/orgs/community/discussions/133558) [Source](https://docs.dynatrace.com/docs/analyze-explore-automate/workflows/actions/github/github-workflows-actions):
+
+| Permission | Level | Why |
+|---|---|---|
+| Contents | Read & write | clone, commit, push |
+| Pull requests | Read & write | `gh pr create` |
+| Metadata | Read | mandatory baseline |
+| Workflows | Read & write | *only if* Claude will touch `.github/workflows/*` |
+
+**Caveat**: fine-grained PATs occasionally fail to create PRs even with `pull_requests: write` due to GitHub edge cases — if you hit this, fall back to classic PATs with `repo` scope [Source](https://github.com/orgs/community/discussions/106661).
+
+**GitHub App installation tokens** are strictly better for production: short-lived (1 hour), per-repo scoped, revocable, and higher rate limits (5,000/hour per installation vs. 5,000/hour per user). For a 2–5 parallel agent setup on one VM, a fine-grained PAT is enough. Move to an App if you ever run enough agents to hit user-level rate limits.
+
+### Avoiding leakage
+
+- Pass the token as `-e GITHUB_TOKEN` at `docker run`, never `ARG`/`ENV` in the Dockerfile. Tokens baked into image layers persist forever.
+- Set `git config user.name` / `user.email` via env vars so commits aren't attributed to `root@hostname`:
+  ```bash
+  git config user.name  "${GIT_AUTHOR_NAME:-claude-bot}"
+  git config user.email "${GIT_AUTHOR_EMAIL:-claude-bot@users.noreply.github.com}"
+  ```
+  Using the `users.noreply.github.com` email avoids exposing a real address in history [Source](https://devtoolhub.com/git-security-best-practices/).
+- Never log `env`. Use `set +x` in bash and `--verbose` carefully — Claude's stream-json will echo shell commands but does not echo env vars.
+
+---
+
+## 4. Orchestration — bash `&` + `wait -n` is the right answer
+
+### Comparison for 2–5 parallel agents on one VM
+
+| Option | Weight | Verdict |
+|---|---|---|
+| `docker run --rm -d` in bash loop + `wait -n` | 0 deps | ✅ **Recommended** |
+| `docker compose` w/ `deploy.replicas` | 1 binary | OK if all tasks are *identical* prompts; awkward to pass per-task env |
+| Docker Swarm | heavyweight | overkill |
+| Nomad single-node | separate daemon | overkill |
+| systemd units per task | host coupling | brittle, hard to clean up |
+| Python + `docker-py` + `ThreadPoolExecutor` | ~30 LoC | ✅ Great if you want structured logging / PR collection |
+| Dagger / Earthly | build systems | wrong tool |
+| Nomad / k8s | cluster schedulers | absurd at this scale |
+
+For 2–5 jobs, bash with `jobs -rp | wc -l` backpressure is 15 lines and zero extra dependencies. Bash 5 adds `wait -n` which makes the pattern cleaner [Source](https://www.baeldung.com/linux/bash-background-jobs-loop).
+
+**Anthropic's own `claudes-c-compiler` project used exactly this approach: a bash while-loop spawning `docker run` per agent, each with `/upstream` mounted as the shared bare repo** [Source](https://www.anthropic.com/engineering/building-c-compiler). If it's good enough for 16 parallel agents producing a 100k-line Rust C compiler, it's good enough for your 2–5 TODOs.
+
+---
+
+## 5. Sandbox Security — the hardening checklist
+
+Running untrusted LLM-generated code requires a defense-in-depth posture. Every item below is cheap and compounds [Source](https://oneuptime.com/blog/post/2026-02-02-docker-security-best-practices/view) [Source](https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html):
+
+| Flag | Purpose |
+|---|---|
+| `--rm` | Auto-delete container on exit — no orphans |
+| `-u 1000:1000` (or `USER node` in Dockerfile) | Never run as root inside |
+| `--cap-drop=ALL` then `--cap-add=NET_ADMIN --cap-add=NET_RAW` (only if using the firewall init script) | Otherwise drop all caps |
+| `--security-opt no-new-privileges:true` | Block setuid escalation [Source](https://docs.datadoghq.com/ja/security/code_security/static_analysis/static_analysis_rules/docker-best-practices/no-new-privileges) |
+| `--read-only` + `--tmpfs /tmp:size=256m,noexec,nosuid` + `--tmpfs /workspace:size=2g` | Immutable FS except workspace/tmp |
+| `--memory=4g --memory-swap=4g` | Hard OOM at 4 GB |
+| `--cpus=2` | 2 cores max per sandbox |
+| `--pids-limit=512` | Prevents fork bombs [Source](https://www.netiq.com/documentation/identity-console/identity_console-install/data/deploying-identity-console-docker-container.html) |
+| `--network=claude-net` (custom bridge) | Isolate from host/other containers |
+| Firewall inside container blocking `169.254.169.254/32` | Blocks AWS/GCP metadata exfil [Source](https://medium.com/@89berner/blocking-docker-from-the-instance-metadata-service-in-aws-and-openstack-7cd39fef9fd8) [Source](https://ops.tips/blog/blocking-docker-containers-from-ec2-metadata/) |
+| Host `iptables -I DOCKER-USER -d 169.254.169.254 -j REJECT` | Belt & suspenders at host level [Source](https://aws.amazon.com/premiumsupport/knowledge-center/ecs-container-ec2-metadata/) |
+| No Docker socket mount | Never `-v /var/run/docker.sock` |
+| No SSH agent forwarding | Don't mount `$SSH_AUTH_SOCK` |
+
+### Network allowlist (the Anthropic pattern)
+
+Anthropic's reference `init-firewall.sh` uses `iptables` + `ipset` to build a default-DROP OUTPUT policy with an allowlist that:
+
+1. Calls GitHub's `/meta` API at runtime and stuffs `web`, `api`, `git` CIDR ranges into an ipset [Source](https://deepwiki.com/anthropics/claude-code/6.2-network-security-and-firewall).
+2. Resolves `registry.npmjs.org`, `api.anthropic.com`, `statsig.com` via `dig` and adds them [Source](https://deepwiki.com/anthropics/claude-code/6.1-devcontainer-configuration).
+3. Sets `OUTPUT DROP`, allows established/related + ipset matches [Source](https://deepwiki.com/anthropics/claude-code/6.2-network-security-and-firewall).
+4. Verifies by testing that `example.com` fails and `api.github.com` succeeds.
+
+You should copy this script verbatim from [`anthropics/claude-code/.devcontainer/init-firewall.sh`](https://github.com/anthropics/claude-code/blob/main/.devcontainer/init-firewall.sh). It requires `NET_ADMIN` + `NET_RAW` capabilities and runs via `sudo` as the first step of the container [Source](https://deepwiki.com/anthropics/claude-code/6.1-devcontainer-configuration).
+
+### Why `--dangerously-skip-permissions` is the right flag *here*
+
+Anthropic's docs explicitly recommend this flag **only inside a hardened container**. The container itself is the sandbox; inside it, every permission prompt is just friction that blocks the Ralph loop [Source](https://www.anthropic.com/engineering/claude-code-auto-mode) [Source](https://blog.promptlayer.com/claude-dangerously-skip-permissions/). Alternative = pre-approved `--allowedTools` list, which is more tedious but safer if you want belt-and-suspenders.
+
+**Warning that must be stated in the report:** Even in a hardened container, `--dangerously-skip-permissions` cannot prevent a *malicious repo* (e.g. a poisoned CLAUDE.md with a prompt injection) from exfiltrating anything the container can reach, including the `GITHUB_TOKEN` and `ANTHROPIC_API_KEY` [Source](https://code.claude.com/docs/en/devcontainer). Treat this pattern as safe only for trusted repos, use short-lived fine-grained PATs, and rotate the API key if you suspect contamination.
+
+---
+
+## 6. Clean-up Guarantees
+
+- **`docker run --rm`** deletes the container filesystem on exit. Combined with `--read-only` + `--tmpfs` you have no volumes to leak.
+- **Do not create named volumes** for state you don't need to preserve. Bind mounts and tmpfs auto-cleanup.
+- **`trap` in entrypoint.sh** catches SIGTERM/SIGINT/EXIT so in-flight work is either pushed or the failing branch is explicitly deleted — see §7 below.
+- **`exec` the final command** (`exec tail -f ...` pattern is NOT needed here because the job is finite; instead, `exec` your entrypoint so the Bash shell is PID 1 and gets SIGTERM directly) [Source](https://kmg.group/posts/2022-05-23-docker-stop-containers-with-signals/).
+- **Log capture**: stream stdout/stderr into `docker run -v "$LOGDIR:/logs"` or simpler, `docker run ... 2>&1 | tee "logs/$TASK_ID.log"` on the host so logs survive the container.
+- **Periodic host cleanup** (harmless since `--rm` already handles it, but insures against crashes): `docker system prune -af --filter "until=24h"` once a day via cron.
+- **Half-pushed branches**: the entrypoint logic must only push *after* tests pass, and on failure must either (a) not push at all, or (b) push to a clearly-marked `failed/` prefix for human review. Never `git push --force` from the agent.
+
+---
+
+## 7. The Entrypoint Script (`agent-entrypoint.sh`)
+
+Drop this into `/usr/local/bin/agent-entrypoint.sh` in the image:
+
+```bash
+#!/usr/bin/env bash
+# Autonomous Claude Code agent entrypoint.
+# Inputs (env vars):
+#   GITHUB_TOKEN      - fine-grained PAT with contents:rw + pull_requests:rw
+#   ANTHROPIC_API_KEY - Anthropic API key
+#   REPO_URL          - e.g. https://github.com/acme/myrepo.git (no token in URL)
+#   BASE_BRANCH       - e.g. develop
+#   BRANCH_NAME       - e.g. feat/todo-42-add-rate-limit
+#   TODO_TEXT         - the TODO/prompt for Claude
+#   TASK_ID           - a short id for logs
+# Optional:
+#   GIT_AUTHOR_NAME   (default claude-bot)
+#   GIT_AUTHOR_EMAIL  (default claude-bot@users.noreply.github.com)
+#   MAX_TURNS         (default 40)
+#   OPEN_PR           (default true)
+
+set -Eeuo pipefail
+
+: "${GITHUB_TOKEN:?GITHUB_TOKEN required}"
+: "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY required}"
+: "${REPO_URL:?REPO_URL required}"
+: "${BASE_BRANCH:=develop}"
+: "${BRANCH_NAME:?BRANCH_NAME required}"
+: "${TODO_TEXT:?TODO_TEXT required}"
+: "${TASK_ID:=$(date +%s)-$$}"
+: "${GIT_AUTHOR_NAME:=claude-bot}"
+: "${GIT_AUTHOR_EMAIL:=claude-bot@users.noreply.github.com}"
+: "${MAX_TURNS:=40}"
+: "${OPEN_PR:=true}"
+
+WORKDIR="/workspace/${TASK_ID}"
+LOGFILE="/workspace/${TASK_ID}.log"
+STATUS="failure"
+
+cleanup() {
+  local ec=$?
+  echo "[agent] cleanup; exit=$ec status=$STATUS" | tee -a "$LOGFILE"
+  # Drop credentials before anything else
+  rm -f ~/.git-credentials 2>/dev/null || true
+  unset GITHUB_TOKEN GH_TOKEN ANTHROPIC_API_KEY
+  # If we failed and never pushed, nothing to clean remotely.
+  # Workspace is tmpfs; will vanish with container.
+  exit "$ec"
+}
+trap cleanup EXIT
+trap 'echo "[agent] interrupted"; exit 130' INT TERM
+
+# --- 1. Configure git ---
+export GIT_TERMINAL_PROMPT=0
+export GH_TOKEN="$GITHUB_TOKEN"     # used by gh CLI
+git config --global user.name  "$GIT_AUTHOR_NAME"
+git config --global user.email "$GIT_AUTHOR_EMAIL"
+git config --global init.defaultBranch main
+git config --global advice.detachedHead false
+git config --global credential.helper store
+umask 077
+printf "https://x-access-token:%s@github.com\n" "$GITHUB_TOKEN" > ~/.git-credentials
+chmod 600 ~/.git-credentials
+
+# --- 2. Clone + checkout ---
+mkdir -p "$WORKDIR"
+cd "$WORKDIR"
+echo "[agent] cloning $REPO_URL" | tee -a "$LOGFILE"
+git clone --depth 50 --branch "$BASE_BRANCH" "$REPO_URL" repo >>"$LOGFILE" 2>&1
+cd repo
+
+# --- 3. Create branch ---
+git checkout -b "$BRANCH_NAME"
+
+# --- 4. Run Claude Code headless ---
+echo "[agent] invoking claude" | tee -a "$LOGFILE"
+PROMPT=$(cat <<EOF
+You are working autonomously in an ephemeral sandbox container.
+Repository is already cloned; you are on branch '$BRANCH_NAME' (based on '$BASE_BRANCH').
+
+TODO to implement:
+---
+$TODO_TEXT
+---
+
+Rules:
+1. Implement the change following the repo's existing conventions (check CLAUDE.md / README / package.json scripts).
+2. Run the project's tests after your changes. If tests fail, iterate until they pass or you're confident the failure is unrelated.
+3. Make small, logically-grouped git commits with clear messages.
+4. DO NOT push; the harness will push after you finish.
+5. DO NOT create a PR; the harness will.
+6. When done, stop and exit.
+EOF
+)
+
+set +e
+claude -p "$PROMPT" \
+  --permission-mode bypassPermissions \
+  --output-format stream-json \
+  --verbose \
+  --max-turns "$MAX_TURNS" \
+  --model "${CLAUDE_MODEL:-claude-sonnet-4-5}" \
+  2>&1 | tee -a "$LOGFILE"
+CLAUDE_EXIT=${PIPESTATUS[0]}
+set -e
+echo "[agent] claude exit=$CLAUDE_EXIT" | tee -a "$LOGFILE"
+
+# --- 5. Sanity check: did Claude produce commits? ---
+if ! git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
+  git fetch origin "$BASE_BRANCH":"$BASE_BRANCH" >/dev/null 2>&1 || true
+fi
+NEW_COMMITS=$(git rev-list --count "origin/${BASE_BRANCH}..HEAD" 2>/dev/null || echo 0)
+if [[ "$NEW_COMMITS" == "0" ]]; then
+  # Claude may have left uncommitted changes; commit them ourselves
+  if [[ -n "$(git status --porcelain)" ]]; then
+    echo "[agent] auto-committing unstaged changes" | tee -a "$LOGFILE"
+    git add -A
+    git commit -m "chore(agent): implement ${BRANCH_NAME}
+
+${TODO_TEXT}
+
+Co-authored-by: claude-bot <claude-bot@users.noreply.github.com>"
+    NEW_COMMITS=1
+  fi
+fi
+
+if [[ "$NEW_COMMITS" == "0" ]]; then
+  echo "[agent] no commits produced; aborting without push" | tee -a "$LOGFILE"
+  exit 2
+fi
+
+if [[ "$CLAUDE_EXIT" -ne 0 ]]; then
+  echo "[agent] claude reported failure; not pushing" | tee -a "$LOGFILE"
+  exit 3
+fi
+
+# --- 6. Optional: run project test command one more time as a hard gate ---
+if [[ -f package.json ]] && jq -e '.scripts.test' package.json >/dev/null 2>&1; then
+  echo "[agent] final test gate" | tee -a "$LOGFILE"
+  if ! npm test --silent >>"$LOGFILE" 2>&1; then
+    echo "[agent] tests failed; not pushing" | tee -a "$LOGFILE"
+    exit 4
+  fi
+fi
+
+# --- 7. Push ---
+echo "[agent] pushing $BRANCH_NAME" | tee -a "$LOGFILE"
+git push -u origin "$BRANCH_NAME" >>"$LOGFILE" 2>&1
+
+# --- 8. Optional: open PR ---
+if [[ "$OPEN_PR" == "true" ]]; then
+  PR_URL=$(gh pr create \
+    --base "$BASE_BRANCH" \
+    --head "$BRANCH_NAME" \
+    --title "[agent] ${BRANCH_NAME}" \
+    --body "Automated PR by Claude Code agent.
+
+**TODO:**
+${TODO_TEXT}
+
+Task id: \`${TASK_ID}\`" 2>>"$LOGFILE" || true)
+  echo "[agent] PR: $PR_URL" | tee -a "$LOGFILE"
+  echo "$PR_URL" > "/workspace/${TASK_ID}.pr_url"
+fi
+
+STATUS="success"
+echo "[agent] done" | tee -a "$LOGFILE"
+exit 0
+```
+
+Key design decisions:
+
+- `set -Eeuo pipefail` catches every error immediately — no silent failures.
+- `trap cleanup EXIT` fires on both normal exit and any error path, wiping credentials first.
+- Claude is told **not** to push or create a PR — the harness does it. This way, if Claude misbehaves or aborts, nothing leaks to the remote.
+- If Claude leaves uncommitted changes (it sometimes does with complex edits), the harness commits them with a co-authored trailer [Source](https://www.anthropic.com/engineering/building-c-compiler).
+- Tests run as a **final gate** before push. This is the pattern Nicholas Carlini used in the parallel-Claude C compiler: high-quality tests are the binding constraint on autonomous work [Source](https://www.anthropic.com/engineering/building-c-compiler).
+- Exit codes:
+  - `0` = success (pushed + maybe PR)
+  - `2` = no changes produced
+  - `3` = Claude errored out
+  - `4` = final tests failed, not pushed
+  - `130` = interrupted
+
+---
+
+## 8. The Dockerfile
+
+```dockerfile
+# syntax=docker/dockerfile:1.7
+FROM node:22-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    NPM_CONFIG_PREFIX=/usr/local/share/npm-global \
+    PATH=/usr/local/share/npm-global/bin:$PATH \
+    DEVCONTAINER=true \
+    CLAUDE_CODE_USE_BEDROCK=0 \
+    CLAUDE_CODE_USE_VERTEX=0
+
+# Minimal system deps: git, gh (for PRs), jq (for tests), ca-certs, curl, iptables/ipset (firewall), sudo
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git ca-certificates curl jq sudo iptables ipset dnsutils iproute2 \
+ && install -m 0755 -d /etc/apt/keyrings \
+ && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null \
+ && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update && apt-get install -y --no-install-recommends gh \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code via npm (pin version for reproducibility)
+ARG CLAUDE_CODE_VERSION=latest
+RUN mkdir -p /usr/local/share/npm-global \
+ && chown -R node:node /usr/local/share/npm-global \
+ && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+ && npm cache clean --force
+
+# Anthropic's firewall script for egress allowlisting
+COPY init-firewall.sh /usr/local/bin/init-firewall.sh
+RUN chmod +x /usr/local/bin/init-firewall.sh \
+ && echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" \
+      > /etc/sudoers.d/node-firewall \
+ && chmod 0440 /etc/sudoers.d/node-firewall
+
+# Our entrypoint
+COPY agent-entrypoint.sh /usr/local/bin/agent-entrypoint.sh
+RUN chmod +x /usr/local/bin/agent-entrypoint.sh \
+ && mkdir -p /workspace /home/node/.claude \
+ && chown -R node:node /workspace /home/node/.claude
+
+USER node
+WORKDIR /workspace
+
+# Run firewall first, then agent. Using bash -c so both execute.
+ENTRYPOINT ["/bin/bash", "-lc", "sudo /usr/local/bin/init-firewall.sh && exec /usr/local/bin/agent-entrypoint.sh"]
+```
+
+Copy `init-firewall.sh` verbatim from [`anthropics/claude-code/.devcontainer/init-firewall.sh`](https://github.com/anthropics/claude-code/blob/main/.devcontainer/init-firewall.sh).
+
+**Expected image size: ~280–330 MB.** You can shave another ~40 MB by dropping `gh` and using the GitHub REST API via `curl` instead.
+
+### Build
+
+```bash
+docker build -t claude-agent:latest .
+```
+
+---
+
+## 9. The Orchestrator — two variants
+
+### Variant A: Pure bash (the Hetzner $10/mo answer)
+
+`todos.json`:
+
+```json
+[
+  {"id":"t001","branch":"feat/add-healthcheck","todo":"Add a /healthz endpoint to the Express app in src/server.ts that returns 200 + JSON {status:'ok'}. Update tests."},
+  {"id":"t002","branch":"fix/null-user-crash","todo":"In src/auth/middleware.ts we crash when req.user is undefined. Add a guard and a unit test."},
+  {"id":"t003","branch":"chore/upgrade-zod","todo":"Upgrade zod to latest, fix any type errors, re-run tests."}
+]
+```
+
+`run.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+: "${GITHUB_TOKEN:?}"; : "${ANTHROPIC_API_KEY:?}"
+REPO_URL="${REPO_URL:-https://github.com/acme/myrepo.git}"
+BASE_BRANCH="${BASE_BRANCH:-develop}"
+MAX_PARALLEL="${MAX_PARALLEL:-4}"
+IMAGE="${IMAGE:-claude-agent:latest}"
+LOGDIR="$(pwd)/logs"
+mkdir -p "$LOGDIR"
+
+# Block the cloud metadata endpoint at the host level (once)
+sudo iptables -C DOCKER-USER -d 169.254.169.254 -j REJECT 2>/dev/null \
+  || sudo iptables -I DOCKER-USER 1 -d 169.254.169.254 -j REJECT
+
+run_one() {
+  local id="$1" branch="$2" todo="$3"
+  echo "[host] launching $id ($branch)"
+  docker run --rm \
+    --name "claude-$id" \
+    --cap-drop=ALL --cap-add=NET_ADMIN --cap-add=NET_RAW \
+    --security-opt no-new-privileges:true \
+    --read-only \
+    --tmpfs /tmp:size=256m,noexec,nosuid \
+    --tmpfs /workspace:size=4g,exec,nosuid,uid=1000,gid=1000 \
+    --tmpfs /home/node:size=64m,exec,nosuid,uid=1000,gid=1000 \
+    --memory=4g --memory-swap=4g \
+    --cpus=2 --pids-limit=512 \
+    -e GITHUB_TOKEN="$GITHUB_TOKEN" \
+    -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+    -e REPO_URL="$REPO_URL" \
+    -e BASE_BRANCH="$BASE_BRANCH" \
+    -e BRANCH_NAME="$branch" \
+    -e TODO_TEXT="$todo" \
+    -e TASK_ID="$id" \
+    -e GIT_AUTHOR_NAME="claude-bot" \
+    -e GIT_AUTHOR_EMAIL="claude-bot@users.noreply.github.com" \
+    "$IMAGE" \
+    >"$LOGDIR/$id.log" 2>&1
+  local ec=$?
+  echo "[host] $id done (exit=$ec)"
+  return $ec
+}
+
+# Read each TODO and schedule it, capping at MAX_PARALLEL
+declare -A PIDS
+while IFS=$'\t' read -r id branch todo; do
+  # backpressure
+  while (( $(jobs -rp | wc -l) >= MAX_PARALLEL )); do
+    wait -n || true
+  done
+  run_one "$id" "$branch" "$todo" &
+  PIDS[$!]="$id"
+done < <(jq -r '.[] | [.id, .branch, .todo] | @tsv' todos.json)
+
+# Drain
+wait
+echo "[host] all agents finished"
+
+# Collect results
+for id in "${PIDS[@]}"; do
+  if [[ -f "$LOGDIR/$id.pr_url" ]]; then
+    echo "$id -> $(cat "$LOGDIR/$id.pr_url")"
+  else
+    echo "$id -> FAILED (see $LOGDIR/$id.log)"
+  fi
+done
+```
+
+The `while (( $(jobs -rp | wc -l) >= MAX_PARALLEL )); do wait -n; done` idiom is the canonical way to cap concurrent bash jobs and is zero-dependency [Source](https://medium.com/cloud-life/parallel-processing-bash-with-limited-concurrency-e5d32c70269f) [Source](https://www.baeldung.com/linux/bash-background-jobs-loop).
+
+**Run it:**
+```bash
+export GITHUB_TOKEN=github_pat_... ANTHROPIC_API_KEY=sk-ant-...
+REPO_URL=https://github.com/acme/myrepo.git MAX_PARALLEL=4 ./run.sh
+```
+
+### Variant B: Python + docker-py (structured result collection)
+
+```python
+#!/usr/bin/env python3
+"""orchestrate.py — spawn N claude-agent containers, collect results."""
+import concurrent.futures as cf
+import json, os, pathlib, sys, docker
+
+REPO_URL       = os.environ["REPO_URL"]
+BASE_BRANCH    = os.environ.get("BASE_BRANCH", "develop")
+GITHUB_TOKEN   = os.environ["GITHUB_TOKEN"]
+ANTHROPIC_KEY  = os.environ["ANTHROPIC_API_KEY"]
+IMAGE          = os.environ.get("IMAGE", "claude-agent:latest")
+MAX_PARALLEL   = int(os.environ.get("MAX_PARALLEL", "4"))
+LOGDIR         = pathlib.Path("logs"); LOGDIR.mkdir(exist_ok=True)
+
+client = docker.from_env()
+
+def run_one(task):
+    tid = task["id"]
+    log = LOGDIR / f"{tid}.log"
+    try:
+        c = client.containers.run(
+            image=IMAGE,
+            name=f"claude-{tid}",
+            detach=True,
+            remove=True,
+            cap_drop=["ALL"],
+            cap_add=["NET_ADMIN", "NET_RAW"],
+            security_opt=["no-new-privileges:true"],
+            read_only=True,
+            tmpfs={
+                "/tmp": "size=256m,noexec,nosuid",
+                "/workspace": "size=4g,exec,nosuid,uid=1000,gid=1000",
+                "/home/node": "size=64m,exec,nosuid,uid=1000,gid=1000",
+            },
+            mem_limit="4g",
+            memswap_limit="4g",
+            nano_cpus=2_000_000_000,   # 2.0 CPUs
+            pids_limit=512,
+            environment={
+                "GITHUB_TOKEN":    GITHUB_TOKEN,
+                "ANTHROPIC_API_KEY": ANTHROPIC_KEY,
+                "REPO_URL":        REPO_URL,
+                "BASE_BRANCH":     BASE_BRANCH,
+                "BRANCH_NAME":     task["branch"],
+                "TODO_TEXT":       task["todo"],
+                "TASK_ID":         tid,
+                "GIT_AUTHOR_NAME": "claude-bot",
+                "GIT_AUTHOR_EMAIL":"claude-bot@users.noreply.github.com",
+            },
+        )
+        with log.open("wb") as f:
+            for chunk in c.logs(stream=True, follow=True, stdout=True, stderr=True):
+                f.write(chunk)
+        rc = c.wait()["StatusCode"]
+    except Exception as e:
+        log.write_text(f"orchestrator error: {e}\n")
+        rc = 255
+    return {"id": tid, "exit": rc, "log": str(log)}
+
+def main():
+    tasks = json.loads(pathlib.Path(sys.argv[1]).read_text())
+    results = []
+    with cf.ThreadPoolExecutor(max_workers=MAX_PARALLEL) as ex:
+        for r in ex.map(run_one, tasks):
+            print(r)
+            results.append(r)
+    pathlib.Path("results.json").write_text(json.dumps(results, indent=2))
+
+if __name__ == "__main__":
+    main()
+```
+
+`pip install docker` and run with `python orchestrate.py todos.json`.
+
+This is ~70 lines, gives you real result objects, and is trivially extensible to post-to-Slack, upload-logs-to-S3, or persist to a SQLite queue.
+
+---
+
+## 10. Prior Art Worth Knowing
+
+- **Anthropic, *"Building a C compiler with a team of parallel Claudes"*** (Feb 2026) — Nicholas Carlini's 16-agent, 2,000-session, $20,000 project. Uses a bare git repo + Docker-per-agent with `/upstream` mount, file-based task locking, and a simple `while true; claude --dangerously-skip-permissions -p "$(cat AGENT_PROMPT.md)"; done` loop. This is the **canonical Anthropic blueprint** for parallel autonomous agents [Source](https://www.anthropic.com/engineering/building-c-compiler).
+- **Anthropic, *"Claude Code auto mode"*** — argues that `--dangerously-skip-permissions` is zero-maintenance but offers no protection; sandboxing is the only safe pattern without Auto Mode [Source](https://www.anthropic.com/engineering/claude-code-auto-mode).
+- **Ralph loop (Geoffrey Huntley)** — the `while true; claude -p "prompt.md"; done` pattern Anthropic also uses. Many implementations: [snarktank/ralph](https://github.com/snarktank/ralph), [frankbria/ralph-claude-code](https://github.com/frankbria/ralph-claude-code), [syuya2036/ralph-loop](https://github.com/syuya2036/ralph-loop). Anthropic now ships this as an official [Ralph Loop plugin](https://claude.com/plugins/ralph-loop) [Source](https://paddo.dev/blog/ralph-wiggum-autonomous-loops/).
+- **[trailofbits/claude-code-devcontainer](https://github.com/trailofbits/claude-code-devcontainer)** — production-quality hardened devcontainer, aimed at security audits of untrusted code. Good reference for cap drops + mounts.
+- **[textcortex/claude-code-sandbox](https://github.com/textcortex/claude-code-sandbox)** (archived, continued in Spritz) — TypeScript CLI that spawns Claude in Docker with git integration; similar philosophy to yours.
+- **[streamingfast/sbox](https://github.com/streamingfast/sbox)** — Go-based sandbox wrapper using Docker's MicroVM sandbox feature for stronger isolation.
+- **[StefanMaron blog series](https://stefanmaron.com/posts/claude-code-standalone-docker-sandbox/)** — honest write-up of building a real sandbox; flags important gotcha: *VS Code devcontainer IPC sockets can leak out of the container*; a standalone Docker image avoids this entirely [Source](https://stefanmaron.com/posts/claude-code-standalone-docker-sandbox/).
+- **[Docker Blog: "Claude Code with Docker"](https://www.docker.com/blog/run-claude-code-with-docker/)** — Docker's own writeup of this pattern including Docker Model Runner for local models [Source](https://www.docker.com/blog/run-claude-code-with-docker/).
+- **[ComposioHQ/agent-orchestrator](https://github.com/ComposioHQ/agent-orchestrator)** — multi-agent orchestrator using tmux/Docker + git worktrees, tracker-agnostic (GitHub/Linear) [Source](https://github.com/ComposioHQ/agent-orchestrator).
+- **OpenHands** has first-class Docker runtime, richer than Claude Code's model, and exposes VNC/browser for inspection — overkill for this use case, but good if you ever want a Web UI [Source](https://arxiv.org/html/2511.03690v1).
+- **Aider in Docker / SWE-agent** — both more research-oriented; Aider has the tightest "diff-and-commit" loop but no built-in sandbox model as polished as Claude's [Source](https://modal.com/blog/open-ai-agents).
+
+---
+
+## 11. Gotchas & Things to Watch
+
+1. **`claude -p` vs interactive auth.** On a headless Linux VM, `claude` interactive mode **ignores** `ANTHROPIC_API_KEY` and demands an OAuth browser login. `claude -p` correctly uses the env var. Stay in `-p` mode [Source](https://github.com/anthropics/claude-code/issues/27900).
+2. **Alpine is not supported-ish.** The native binary uses glibc symbols; breakage is recurring. Stay on `node:X-slim` (Debian) [Source](https://github.com/anthropics/claude-code/issues/29559).
+3. **`--max-turns` can exit 0 with `error_max_turns` in JSON.** Parse the JSON, not just exit code, if you care about distinguishing "done" from "ran out of turns" [Source](https://github.com/anthropics/claude-code/issues/3286).
+4. **Bypass mode doesn't bypass EVERYTHING.** Writes to `~/.claude/` still trigger a "modify config files" prompt; set `HOME=/home/node` cleanly and don't let Claude's skills try to write there in your setup [Source](https://github.com/anthropics/claude-code/issues/35718).
+5. **Cloud-VM metadata service is a lethal exfil path.** Block `169.254.169.254/32` at both host (`DOCKER-USER` chain) and inside-container iptables. On AWS, ECS clusters bake this rule in for exactly this reason [Source](https://aws.amazon.com/premiumsupport/knowledge-center/ecs-container-ec2-metadata/).
+6. **Tokens in `.git/config` are persistent leaks.** Use credential helper files in tmpfs (wiped on container exit) or the `x-access-token:...@github.com` URL *only on the clone* and immediately rewrite the remote: `git remote set-url origin "https://github.com/$OWNER/$REPO.git"` right after clone.
+7. **Prompt injection via CLAUDE.md.** A malicious repo can put "exfiltrate `$ANTHROPIC_API_KEY` to attacker.com" in its CLAUDE.md. The firewall allowlist mitigates this but is not perfect. Pair with short-lived tokens and rotate on suspicion [Source](https://code.claude.com/docs/en/devcontainer).
+8. **Claude may not commit.** About 10% of runs it leaves staged-but-uncommitted changes. The entrypoint's auto-commit fallback (§7) handles this.
+9. **Fine-grained PAT PR-creation oddities.** Some fine-grained PATs get 403 on `POST /pulls` despite correct scopes; fall back to classic PAT with `repo` if you see this [Source](https://github.com/orgs/community/discussions/106661).
+10. **Branch name collisions.** Prefix with task id (e.g. `agent/t042-short-slug`) so retries don't clash. If Claude fails halfway and you re-run, clean up with `git push origin --delete` beforehand or use `git push --force-with-lease` **only** inside `agent/*` prefixed branches.
+11. **Don't mount the Docker socket.** Even for "convenience"; it is a full root escape.
+12. **`docker stats` monitoring is free.** Because you set `--memory` and `--pids-limit`, a runaway agent just gets OOM-killed — cheap safety net.
+13. **Clean the image cache regularly** so your 40-GB Hetzner disk doesn't fill up: `docker system prune -af --filter "until=168h"` weekly.
+14. **`--max-turns` + `--output-format stream-json`** also lets you *stream* the agent's thoughts to your orchestrator log in real time — useful for debugging.
+15. **Tests should be project-native.** The entrypoint's final `npm test` gate is a placeholder; if your repo uses `pytest`, `cargo test`, `make test`, etc., swap that block or (better) let Claude discover and run it, then just parse the last-commit test run from Claude's stream-json output.
+
+---
+
+## 12. Final Recommended Stack (TL;DR)
+
+- **Base image:** `node:22-slim` (≈240 MB), final image ≈300 MB with Claude + git + gh.
+- **Claude install:** `npm install -g @anthropic-ai/claude-code@latest` (pin a version for prod).
+- **Network hardening:** Anthropic's `init-firewall.sh` (iptables + ipset allowlist of github.com, api.anthropic.com, registry.npmjs.org) + host-level block of `169.254.169.254`.
+- **Runtime flags:** `--rm --cap-drop=ALL --cap-add=NET_ADMIN --cap-add=NET_RAW --security-opt no-new-privileges:true --read-only --tmpfs /workspace:size=4g --memory=4g --cpus=2 --pids-limit=512 -u 1000:1000`.
+- **Auth:** `GITHUB_TOKEN` (fine-grained PAT, Contents+PR write) + `ANTHROPIC_API_KEY` passed as env vars; credentials written to tmpfs `~/.git-credentials` and wiped on exit.
+- **Agent command:** `claude -p "$PROMPT" --permission-mode bypassPermissions --output-format stream-json --verbose --max-turns 40`.
+- **Orchestrator:** 50-line bash script with `jq`, `jobs -rp | wc -l` backpressure, and `wait -n`. Upgrade to docker-py + `ThreadPoolExecutor` (~70 lines) when you want structured results.
+- **One-liner to launch 4 parallel TODOs:**
+  ```bash
+  MAX_PARALLEL=4 REPO_URL=https://github.com/acme/myrepo.git \
+  GITHUB_TOKEN=github_pat_... ANTHROPIC_API_KEY=sk-ant-... \
+  ./run.sh
+  ```
+
+This stack runs comfortably on a Hetzner **CPX31** (4 vCPU, 8 GB RAM, €7.99/mo), which handles 4 parallel agents with 2 CPUs + 4 GB RAM each when not all peaked simultaneously. For 5 truly concurrent heavy agents, step up to the CPX41 (8 vCPU / 16 GB, ~€15/mo). Either way, you have never left the "single VM, bash-script orchestration" tier — which is precisely the point.
