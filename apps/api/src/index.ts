@@ -26,9 +26,11 @@ import { aiRouter } from './routes/ai.js';
 import { repoMappingsRouter } from './routes/repo-mappings.js';
 import { analysesRouter } from './routes/analyses.js';
 import { queueRouter } from './routes/queue.js';
+import { sandboxRouter } from './routes/sandbox.js';
 import { startScheduler } from './services/scheduler.js';
 import { startRecurrenceScheduler } from './services/recurrence-generator.js';
 import { startQueueRunner } from './services/queue-runner.js';
+import { sweepOrphans } from './services/sandbox-runner.js';
 
 const app = express();
 const PORT = Number(process.env.API_PORT ?? 3001);
@@ -60,6 +62,7 @@ app.use('/api/ai', aiRouter);
 app.use('/api/repo-mappings', repoMappingsRouter);
 app.use('/api/analyses', analysesRouter);
 app.use('/api/queue', queueRouter);
+app.use('/api/sandbox', sandboxRouter);
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof ZodError) {
@@ -76,4 +79,7 @@ app.listen(PORT, () => {
   startScheduler();
   startRecurrenceScheduler();
   startQueueRunner();
+  // Clean up orphan sandbox containers left behind by a crash / kill -9.
+  // Non-blocking and non-fatal — the docker context may be unreachable on boot.
+  sweepOrphans().catch(() => {});
 });
