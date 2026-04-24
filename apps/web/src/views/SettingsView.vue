@@ -507,6 +507,54 @@ async function rebuildSandboxImage() {
   }
 }
 
+// Sandbox-Preprompt — short template without werkbank-MCP references. The
+// container has no network path to the werkbank MCP server, so the default
+// work-mode preprompt's "rufe mcp__werkbank__get_todo" instructions would
+// send Claude chasing tools that don't exist. Mirrors SANDBOX_PREPROMPT in
+// apps/api/src/services/claude-sessions.ts — keep in sync.
+const SANDBOX_DEFAULT_PREPROMPT = `## Aktuelle Aufgabe
+Titel: {{todo_title}}
+
+Beschreibung:
+{{todo_description}}
+
+## Bestehende Subtasks
+{{subtasks}}
+{{snippets}}{{analyses}}
+## User-Prompt
+{{user_prompt}}
+`;
+
+const sandboxPreprompt = ref('');
+const sandboxPrepromptBusy = ref(false);
+
+async function loadSandboxPreprompt() {
+  try {
+    const all = await api.settings.getAll();
+    const v = all['agent.sandbox_preprompt'];
+    sandboxPreprompt.value = typeof v === 'string' && v.trim() ? v : SANDBOX_DEFAULT_PREPROMPT;
+  } catch (e) {
+    flashMsg('err', e instanceof Error ? e.message : String(e));
+  }
+}
+onMounted(loadSandboxPreprompt);
+
+async function saveSandboxPreprompt() {
+  sandboxPrepromptBusy.value = true;
+  try {
+    await api.settings.set('agent.sandbox_preprompt', sandboxPreprompt.value);
+    flashMsg('ok', 'Sandbox-Preprompt gespeichert.');
+  } catch (e) {
+    flashMsg('err', e instanceof Error ? e.message : String(e));
+  } finally {
+    sandboxPrepromptBusy.value = false;
+  }
+}
+
+function resetSandboxPreprompt() {
+  sandboxPreprompt.value = SANDBOX_DEFAULT_PREPROMPT;
+}
+
 // Firewall whitelist preview — the sandbox runner restricts outbound network
 // traffic to these hosts plus the configured werkbank_public_url. Read-only
 // in the UI because the list is wired into docker/sandbox/Dockerfile +
@@ -945,6 +993,30 @@ const tabs: { id: TabId; label: string }[] = [
         v-if="sandboxBuildLog || sandboxBuildActive"
         class="sandbox-build-log"
       >{{ sandboxBuildLog || '(warte auf Build-Output…)' }}</pre>
+
+      <div style="margin-top: 1.5rem;">
+        <h4 style="margin: 0 0 0.25rem 0; font-family: var(--font-display);">Sandbox-Preprompt</h4>
+        <p v-pre style="color: var(--fg-muted); font-size: 0.8rem; margin: 0 0 0.5rem 0;">
+          Vorlage, die beim Sandbox-Lauf um deinen User-Prompt gelegt wird. Keine werkbank-MCP-Aufrufe hier — der Container erreicht den MCP-Server nicht. Der Docker-Entrypoint hängt zusätzliche Regeln („nicht pushen, kein PR") davor. Platzhalter:
+          <code>{{todo_id}}</code>,
+          <code>{{todo_title}}</code>,
+          <code>{{todo_description}}</code>,
+          <code>{{todo_status}}</code>,
+          <code>{{subtasks}}</code>,
+          <code>{{snippets}}</code>,
+          <code>{{analyses}}</code>,
+          <code>{{user_prompt}}</code>.
+        </p>
+        <textarea
+          v-model="sandboxPreprompt"
+          rows="14"
+          style="font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.5;"
+        />
+        <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+          <button class="primary" :disabled="sandboxPrepromptBusy" @click="saveSandboxPreprompt">Speichern</button>
+          <button class="ghost" :disabled="sandboxPrepromptBusy" @click="resetSandboxPreprompt">Auf Standard zurücksetzen</button>
+        </div>
+      </div>
 
       <div style="margin-top: 1rem;">
         <h4 style="margin: 0 0 0.25rem 0; font-family: var(--font-display);">Firewall-Whitelist (nur Lesen)</h4>
