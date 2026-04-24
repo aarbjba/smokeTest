@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import type { Todo, TaskType } from '../types';
-import { PRIORITY_LABELS, TODO_DRAG_TYPE, TASK_TYPE_LABELS, TASK_TYPE_ICONS } from '../types';
+import type { Todo, TaskType, SandboxStatus } from '../types';
+import { PRIORITY_LABELS, TODO_DRAG_TYPE, TASK_TYPE_LABELS, TASK_TYPE_ICONS, SANDBOX_STATUS_LABELS } from '../types';
 import { beginCardDrag, endCardDrag, draggingCardId, isCardDragging } from '../stores/dragState';
 import { useTodosStore } from '../stores/todos';
 import { useSelectionStore } from '../stores/selection';
@@ -152,6 +152,15 @@ function sourceBadge(): string {
 const taskType = computed<TaskType>(() => (props.todo.task_type ?? 'other') as TaskType);
 const showTypeChip = computed(() => taskType.value !== 'other');
 const typeChipLabel = computed(() => `${TASK_TYPE_ICONS[taskType.value]} ${TASK_TYPE_LABELS[taskType.value]}`);
+
+// Sandbox chip — hidden when sandbox_status is falsy or 'idle' (no noise on
+// todos that never hit the sandbox). One line of template in the meta row.
+const sandboxStatus = computed<SandboxStatus | null>(
+  () => (props.todo.sandbox_status ?? null) as SandboxStatus | null,
+);
+const showSandboxChip = computed(
+  () => sandboxStatus.value !== null && sandboxStatus.value !== 'idle',
+);
 </script>
 
 <style scoped>
@@ -447,6 +456,12 @@ const typeChipLabel = computed(() => `${TASK_TYPE_ICONS[taskType.value]} ${TASK_
         :class="`task-type-${taskType}`"
         :title="`Aufgabentyp: ${TASK_TYPE_LABELS[taskType]}`"
       >{{ typeChipLabel }}</span>
+      <span
+        v-if="showSandboxChip && sandboxStatus"
+        class="sandbox-chip"
+        :class="`sandbox-chip-${sandboxStatus}`"
+        :title="`Sandbox: ${SANDBOX_STATUS_LABELS[sandboxStatus]}`"
+      >🐳 {{ SANDBOX_STATUS_LABELS[sandboxStatus] }}</span>
       <span v-if="todo.due_date" class="tag">📅 {{ new Date(todo.due_date).toLocaleDateString() }}</span>
       <span v-for="t in todo.tags.slice(0, 4)" :key="t" class="tag">#{{ t }}</span>
       <span v-if="todo.tags.length > 4" class="tag">+{{ todo.tags.length - 4 }}</span>
