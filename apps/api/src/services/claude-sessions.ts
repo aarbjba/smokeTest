@@ -11,6 +11,40 @@ const CLAUDE_CMD = process.env.CLAUDE_CLI ?? 'claude';
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
 const SESSION_ID_RE = /^[A-Za-z0-9_-]+$/;
 const TERMINATE_TOKEN = 'TERMINATE';
+const IS_WINDOWS = process.platform === 'win32';
+
+/**
+ * Cross-platform tree-kill. `claude` itself spawns child processes (MCP
+ * servers, bash tool invocations, model process) so a naive child.kill()
+ * against the shell wrapper leaves orphans behind — especially painful on
+ * Windows where `shell: true` means child.kill() only hits cmd.exe.
+ *
+ * Windows: `taskkill /PID <pid> /T /F` — /T walks the entire process tree,
+ * /F forces termination. Fire-and-forget; taskkill is synchronous enough
+ * and we don't block the main flow on it.
+ *
+ * Unix: process group kill via negative PID. Requires spawn(... { detached: true })
+ * so the child gets its own process group. Falls back to direct PID kill
+ * if the group kill fails (e.g. if detached wasn't honored).
+ */
+function treeKill(pid: number | undefined): void {
+  if (!pid) return;
+  if (IS_WINDOWS) {
+    try {
+      spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore',
+        shell: false,
+      });
+    } catch {
+      /* ignore — best effort */
+    }
+    return;
+  }
+  // Unix: try process group first, then direct, for both SIGTERM and SIGKILL.
+  try { process.kill(-pid, 'SIGKILL'); return; } catch { /* fall through */ }
+  try { process.kill(pid, 'SIGKILL'); } catch { /* ignore */ }
+}
 
 // ─── werkbank MCP wiring ────────────────────────────────────────────────────
 // Every per-todo Claude session gets the werkbank MCP server attached so the
@@ -174,10 +208,12 @@ function persistSessionId(todoId: number, sessionId: string | null): void {
 // ─── Preprompt rendering ────────────────────────────────────────────────────
 // Default template. User-editable via settings key 'agent.preprompt'.
 // Placeholders: {{todo_id}}, {{todo_title}}, {{todo_description}}, {{todo_status}},
-//               {{subtasks}}, {{analyses}}, {{user_prompt}}
+//               {{subtasks}}, {{snippets}}, {{analyses}}, {{user_prompt}}
 //
 // {{analyses}} expands to the full "## Bisherige Analysen" block (incl. heading)
 // when the caller opted to include them, or to an empty string otherwise.
+// {{snippets}} expands to a "## Snippets" block with fenced code blocks when the
+// caller opted to include them, or to an empty string otherwise.
 const DEFAULT_PREPROMPT = `Du arbeitest an einer Aufgabe aus der Werkbank. Nutze die MCP-Tools "werkbank" um den Fortschritt live zu tracken.
 
 ## Aktuelle Aufgabe
@@ -190,11 +226,12 @@ Beschreibung:
 
 ## Bestehende Subtasks
 {{subtasks}}
-{{analyses}}
+{{snippets}}{{analyses}}
 ## Arbeitsweise
-1. Prüfe zuerst die oben aufgeführten bestehenden Subtasks. Entscheide, ob sie die Aufgabe vollständig abdecken. Sind sie ausreichend, arbeite sie direkt ab. Fehlen Schritte oder existieren noch keine, ergänze sie via mcp__werkbank__add_subtask, bevor du mit der Umsetzung beginnst.
-2. Arbeite die Subtasks ab und hake jeden Schritt ab, sobald er erledigt ist (mcp__werkbank__update_subtask mit done=true).
-3. Wenn du fertig bist, rufe mcp__werkbank__finalize_todo mit einer kurzen Zusammenfassung der Ergebnisse auf. Setze next_status auf "test" wenn Review nötig ist, sonst "done".
+1. Rufe **zuerst** mcp__werkbank__get_todo mit der oben genannten Todo-ID auf, um den aktuellen Stand der Aufgabe inklusive aller Subtasks live aus der Werkbank zu laden. Der Subtask-Block oben ist nur ein Snapshot vom Session-Start — er kann zwischenzeitlich ergänzt, umbenannt oder abgehakt worden sein. Arbeite grundsätzlich mit dem frisch geladenen Stand.
+2. Prüfe die geladenen Subtasks. Decken sie die Aufgabe vollständig ab? Sind sie ausreichend, arbeite sie direkt ab. Fehlen Schritte oder existieren noch keine, ergänze sie via mcp__werkbank__add_subtask, bevor du mit der Umsetzung beginnst.
+3. Arbeite die Subtasks nacheinander ab und hake jeden Schritt ab, sobald er erledigt ist (mcp__werkbank__update_subtask mit done=true). Bei längeren Sessions rufe zwischendurch erneut mcp__werkbank__get_todo auf, damit du nicht an veralteten Subtasks arbeitest.
+4. Wenn du fertig bist, rufe mcp__werkbank__finalize_todo mit einer kurzen Zusammenfassung der Ergebnisse auf. Setze next_status auf "test" wenn Review nötig ist, sonst "done".
 
 ## User-Prompt
 {{user_prompt}}
@@ -202,7 +239,8 @@ Beschreibung:
 
 // Analyse-mode template: read-only understanding pass, produces an analysis +
 // suggested subtasks. Does NOT implement or finalize.
-// Placeholders: {{todo_id}}, {{todo_title}}, {{todo_description}}, {{todo_status}}, {{subtasks}}
+// Placeholders: {{todo_id}}, {{todo_title}}, {{todo_description}}, {{todo_status}},
+//               {{subtasks}}, {{snippets}}
 const ANALYSE_PREPROMPT = `Du arbeitest im **Analyse-Modus** an einer Aufgabe aus der Werkbank. Ziel: die Aufgabe verstehen, strukturiert analysieren und Umsetzungsschritte vorschlagen. Du setzt selbst nichts um und veränderst keinen Code.
 
 ## Aktuelle Aufgabe
@@ -215,7 +253,7 @@ Beschreibung:
 
 ## Bestehende Subtasks
 {{subtasks}}
-
+{{snippets}}
 ## Ablauf
 1. Sichte Titel, Beschreibung, bestehende Subtasks und angehängte Dateien (falls übergeben).
 2. Verfasse eine strukturierte Analyse in Markdown mit folgenden Abschnitten:
@@ -230,7 +268,20 @@ Beschreibung:
 
 export type AgentMode = 'work' | 'analyse';
 
-function getPreprompt(mode: AgentMode): string {
+function getPreprompt(mode: AgentMode, todoId: number): string {
+  // Per-todo override takes precedence over the global setting. Only applied
+  // to work mode — analyse mode has its own structured template that users
+  // rarely customize per-todo.
+  if (mode === 'work') {
+    try {
+      const row = db
+        .prepare(`SELECT preprompt FROM todos WHERE id = ?`)
+        .get(todoId) as { preprompt: string | null } | undefined;
+      if (row?.preprompt && row.preprompt.trim()) return row.preprompt;
+    } catch {
+      /* ignore — fall through to global setting */
+    }
+  }
   if (mode === 'analyse') {
     try {
       const row = db.prepare(`SELECT value FROM settings WHERE key = 'agent.analyse_preprompt'`).get() as { value: string } | undefined;
@@ -271,8 +322,21 @@ interface AnalysisLite {
   created_at: string;
 }
 
-function renderPreprompt(todoId: number, userPrompt: string, mode: AgentMode, includeAnalyses: boolean): string {
-  const template = getPreprompt(mode);
+interface SnippetLite {
+  id: number;
+  title: string;
+  language: string;
+  content: string;
+}
+
+function renderPreprompt(
+  todoId: number,
+  userPrompt: string,
+  mode: AgentMode,
+  includeAnalyses: boolean,
+  includeSnippets: boolean,
+): string {
+  const template = getPreprompt(mode, todoId);
   const todo = db.prepare(
     `SELECT id, title, description, status FROM todos WHERE id = ?`,
   ).get(todoId) as TodoLite | undefined;
@@ -292,6 +356,29 @@ function renderPreprompt(todoId: number, userPrompt: string, mode: AgentMode, in
         const tag = s.suggested ? ' [Vorschlag]' : '';
         return `- [${mark}] (#${s.id})${tag} ${s.title}`;
       }).join('\n');
+
+  // Snippets attached to the todo — opt-in. Rendered as fenced code blocks so
+  // the agent can quote them inline without guessing at language. Stored in the
+  // Werkbank UI as "code scratchpad" entries (see SnippetEditor.vue); users
+  // typically drop example payloads, logs, CLI output or reference code here.
+  let snippetsBlock = '';
+  if (includeSnippets) {
+    const snippets = db.prepare(
+      `SELECT id, title, language, content FROM snippets WHERE todo_id = ? ORDER BY position ASC, id ASC`,
+    ).all(todoId) as SnippetLite[];
+    if (snippets.length > 0) {
+      const parts = snippets.map((s) => {
+        const heading = `### ${s.title?.trim() ? s.title.trim() : `Snippet #${s.id}`}`;
+        const lang = (s.language || '').trim() || 'text';
+        // Fenced code blocks use no-nesting ``` — snippets may themselves
+        // contain ``` (e.g. markdown dumps), so bump the fence to 4 backticks
+        // when the content has triple-backtick sequences.
+        const fence = s.content.includes('```') ? '````' : '```';
+        return `${heading}\n${fence}${lang}\n${s.content}\n${fence}`;
+      });
+      snippetsBlock = `\n## Snippets\n${parts.join('\n\n')}\n`;
+    }
+  }
 
   // Previously saved analyses from analyse-mode runs, injected only when the
   // caller opted in (Analyse-einbeziehen checkbox in the agent panel). Newest
@@ -313,6 +400,7 @@ function renderPreprompt(todoId: number, userPrompt: string, mode: AgentMode, in
     .replace(/\{\{todo_description\}\}/g, todo.description || '(leer)')
     .replace(/\{\{todo_status\}\}/g, todo.status)
     .replace(/\{\{subtasks\}\}/g, subtasksStr)
+    .replace(/\{\{snippets\}\}/g, snippetsBlock)
     .replace(/\{\{analyses\}\}/g, analysesBlock)
     .replace(/\{\{user_prompt\}\}/g, userPrompt);
 }
@@ -342,7 +430,15 @@ class SessionStore extends EventEmitter {
     return this.sessions.has(todoId);
   }
 
-  start(todoId: number, prompt: string, cwd: string, attachmentIds: number[] = [], mode: AgentMode = 'work', includeAnalyses: boolean = false): ClaudeSession {
+  start(
+    todoId: number,
+    prompt: string,
+    cwd: string,
+    attachmentIds: number[] = [],
+    mode: AgentMode = 'work',
+    includeAnalyses: boolean = false,
+    includeSnippets: boolean = false,
+  ): ClaudeSession {
     if (!existsSync(cwd)) throw Object.assign(new Error(`Directory does not exist: ${cwd}`), { status: 400 });
     if (!statSync(cwd).isDirectory()) throw Object.assign(new Error(`Not a directory: ${cwd}`), { status: 400 });
 
@@ -358,7 +454,7 @@ class SessionStore extends EventEmitter {
     // Wrap the user prompt with the configured preprompt template (todo context,
     // subtasks, workflow instructions). Users can edit the template in Settings
     // — see apps/web/src/views/SettingsView.vue.
-    const renderedPrompt = renderPreprompt(todoId, prompt, mode, includeAnalyses);
+    const renderedPrompt = renderPreprompt(todoId, prompt, mode, includeAnalyses, includeSnippets);
 
     const session: ClaudeSession = {
       todoId,
@@ -403,7 +499,7 @@ class SessionStore extends EventEmitter {
     return session;
   }
 
-  private spawnProcess(session: ClaudeSession): void {
+  private spawnProcess(session: ClaudeSession, resumeSessionId?: string): void {
     const args = [
       '-p',
       '--input-format', 'stream-json',
@@ -411,6 +507,11 @@ class SessionStore extends EventEmitter {
       '--verbose',
       '--dangerously-skip-permissions',
     ];
+    if (resumeSessionId) {
+      // Replaying an existing session keeps Claude's in-memory context
+      // (conversation history, tool state) intact across an interrupt.
+      args.push('--resume', resumeSessionId);
+    }
 
     // Attach MCP servers for this todo. Precedence: per-todo overrides →
     // repo-root .mcp.json → generated werkbank-only config. Every spawn
@@ -421,12 +522,17 @@ class SessionStore extends EventEmitter {
       args.push('--mcp-config', mcpConfigPath);
     }
 
+    // `detached: true` on Unix puts claude into its own process group so we
+    // can tree-kill via negative PID later. On Windows `detached` behaves
+    // differently (new console) — we rely on `taskkill /T` for tree kill
+    // there, so keep the platform default.
     const child = spawn(CLAUDE_CMD, args, {
       cwd: session.cwd,
       env: { ...process.env },
       shell: true,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
+      detached: !IS_WINDOWS,
     });
     this.processes.set(session.todoId, child);
     this.stdoutBuffers.set(session.todoId, '');
@@ -460,9 +566,14 @@ class SessionStore extends EventEmitter {
 
     child.on('close', (code) => {
       this.flushStdoutBuffer(session, true);
-      if (this.processes.get(session.todoId) === child) {
-        this.processes.delete(session.todoId);
+      // If this child is no longer the one tracked for the session (i.e.
+      // it was replaced by an interrupt→respawn), fully ignore its exit —
+      // the new child owns the session state now.
+      const isCurrent = this.processes.get(session.todoId) === child;
+      if (!isCurrent) {
+        return;
       }
+      this.processes.delete(session.todoId);
       this.stdoutBuffers.delete(session.todoId);
       session.turnActive = false;
       if (session.status === 'running') {
@@ -689,11 +800,21 @@ class SessionStore extends EventEmitter {
     }
   }
 
-  /** Hard kill — used by stop/clear. */
+  /**
+   * Hard kill — tree-kills the claude process AND all its descendants
+   * (MCP servers, bash sub-shells, the model process). Used by stop/clear/kill.
+   *
+   * On Windows `shell: true` means child.pid is cmd.exe, so child.kill()
+   * alone leaves claude.exe orphaned. `taskkill /T /F` via treeKill() walks
+   * the whole tree. On Unix the spawn is detached so -pid kills the group.
+   */
   private killProcess(todoId: number): void {
     const child = this.processes.get(todoId);
     if (child && !child.killed) {
-      try { child.kill(); } catch { /* ignore */ }
+      treeKill(child.pid);
+      // Best-effort direct kill as well — redundant on healthy systems but
+      // cheap insurance if the tree-kill tool isn't available.
+      try { child.kill('SIGKILL'); } catch { /* ignore */ }
     }
     this.processes.delete(todoId);
     this.stdoutBuffers.delete(todoId);
@@ -717,6 +838,115 @@ class SessionStore extends EventEmitter {
     } else {
       this.killProcess(todoId);
     }
+    return session;
+  }
+
+  /**
+   * Nuclear kill — same as stop() but labels the output explicitly as a
+   * forced kill so the user knows every underlying process (claude, MCP
+   * servers, sub-shells) has been tree-killed. Semantically identical to
+   * stop() but clearer in the UI and log trail.
+   */
+  kill(todoId: number): ClaudeSession | undefined {
+    const session = this.sessions.get(todoId);
+    if (session && session.status === 'running') {
+      this.killProcess(todoId);
+      session.status = 'exited';
+      session.turnActive = false;
+      session.exitCode = -9;
+      session.endedAt = Date.now();
+      session.errorMessage = 'killed by user';
+      const lastTurn = session.turns[session.turns.length - 1];
+      if (lastTurn && lastTurn.endedAt === null) {
+        lastTurn.endedAt = session.endedAt;
+        if (lastTurn.result === null) lastTurn.result = 'error';
+      }
+      this.append(
+        session,
+        '\n[💀 session killed — all processes tree-terminated]\n',
+        lastTurn ?? null,
+      );
+      this.emit('end', todoId, session);
+    } else {
+      this.killProcess(todoId);
+    }
+    return session;
+  }
+
+  /**
+   * Soft interrupt — aborts the current turn mid-generation WITHOUT losing
+   * session context. Strategy: tree-kill the running claude process, then
+   * respawn with `--resume <sessionId>` so Claude reloads the conversation
+   * history from its on-disk session store. The session stays logically
+   * 'running' — user can immediately `send()` a new message to redirect.
+   *
+   * Without a sessionId (very early in a run, before Claude emitted its
+   * session_id in the first `system/init` event) we can't resume, so we
+   * fall back to behaving like stop().
+   */
+  interrupt(todoId: number): ClaudeSession | undefined {
+    const session = this.sessions.get(todoId);
+    if (!session) return undefined;
+    if (session.status !== 'running') return session;
+
+    const sessionId = session.sessionId;
+
+    // No session_id yet — can't resume. Degrade to a hard stop so the user
+    // isn't left with a zombie turn. Tell them why.
+    if (!sessionId) {
+      this.append(
+        session,
+        '\n[⚠ interrupt: keine session_id verfügbar — Session wird gestoppt. Clear + neu starten um weiterzuarbeiten.]\n',
+        session.turns[session.turns.length - 1] ?? null,
+      );
+      return this.stop(todoId);
+    }
+
+    const currentTurn = session.turns[session.turns.length - 1] ?? null;
+
+    // Kill the live process tree. killProcess() clears the tracked child
+    // and stdout buffer; the child's 'close' handler would normally flip
+    // status to 'error' / 'exited', but we pre-empt that check below.
+    this.killProcess(todoId);
+
+    // Mark current turn as interrupted. The 'close' event from the killed
+    // process will fire async — by then we've already respawned and
+    // overwritten the processes map, so its guard `processes.get(todoId) === child`
+    // will be false and it won't touch session state. Still, set status
+    // explicitly here so the intermediate snapshot is coherent.
+    if (currentTurn && currentTurn.endedAt === null) {
+      currentTurn.endedAt = Date.now();
+      currentTurn.result = 'error';
+    }
+    session.turnActive = false;
+    session.status = 'running'; // staying running — we're respawning.
+
+    this.append(
+      session,
+      `\n[⏸ turn ${currentTurn?.index ?? '?'} unterbrochen — Session wird mit --resume wieder aufgenommen…]\n`,
+      currentTurn,
+    );
+
+    // Respawn with --resume. Same listeners, same session object; stdin is
+    // fresh and ready for the next submitTurn() call.
+    try {
+      this.spawnProcess(session, sessionId);
+      this.append(
+        session,
+        `[✓ resumed — bereit für neue Anweisung]\n\n`,
+        null,
+      );
+      // Emit a turn-end so the UI flips out of "thinking" state and
+      // re-enables the send button without waiting for the next chunk.
+      this.emit('turn-end', todoId, session);
+    } catch (err) {
+      session.status = 'error';
+      session.errorMessage = err instanceof Error ? err.message : 'resume failed';
+      session.endedAt = Date.now();
+      this.append(session, `[✗ resume fehlgeschlagen: ${session.errorMessage}]\n`, null);
+      this.emit('end', todoId, session);
+    }
+
     return session;
   }
 

@@ -27,7 +27,10 @@ type TodoRow = {
 };
 
 function hydrate(row: TodoRow) {
-  const raw = row as unknown as { mcp_servers?: string | null };
+  const raw = row as unknown as {
+    mcp_servers?: string | null;
+    saved_paths?: string | null;
+  };
   let mcpServers: unknown[] = [];
   if (raw.mcp_servers) {
     try {
@@ -37,7 +40,21 @@ function hydrate(row: TodoRow) {
       // Corrupted JSON — treat as empty rather than 500'ing the list call.
     }
   }
-  return { ...row, tags: JSON.parse(row.tags || '[]') as string[], mcp_servers: mcpServers };
+  let savedPaths: string[] = [];
+  if (raw.saved_paths) {
+    try {
+      const parsed = JSON.parse(raw.saved_paths);
+      if (Array.isArray(parsed)) savedPaths = parsed.filter((p) => typeof p === 'string');
+    } catch {
+      /* ignore */
+    }
+  }
+  return {
+    ...row,
+    tags: JSON.parse(row.tags || '[]') as string[],
+    mcp_servers: mcpServers,
+    saved_paths: savedPaths,
+  };
 }
 
 // Select list includes subtask aggregates via correlated subqueries so the board
@@ -211,19 +228,35 @@ todosRouter.get('/:id', (req, res) => {
 
 todosRouter.post('/', (req, res) => {
   const data = CreateTodoSchema.parse(req.body);
-  const info = db.prepare(
+  const insertTodo = db.prepare(
     `INSERT INTO todos (title, description, status, priority, tags, due_date, source, task_type)
      VALUES (@title, @description, @status, @priority, @tags, @due_date, 'local', @task_type)`
-  ).run({
-    title: data.title,
-    description: data.description ?? '',
-    status: data.status ?? 'todo',
-    priority: data.priority ?? 2,
-    tags: JSON.stringify(data.tags ?? []),
-    due_date: data.due_date ?? null,
-    task_type: data.task_type ?? 'other',
+  );
+  const insertSubtask = db.prepare(
+    `INSERT INTO subtasks (todo_id, title, done, position, suggested) VALUES (?, ?, 0, ?, 0)`
+  );
+  const tx = db.transaction(() => {
+    const info = insertTodo.run({
+      title: data.title,
+      description: data.description ?? '',
+      status: data.status ?? 'todo',
+      priority: data.priority ?? 2,
+      tags: JSON.stringify(data.tags ?? []),
+      due_date: data.due_date ?? null,
+      task_type: data.task_type ?? 'other',
+    });
+    const todoId = Number(info.lastInsertRowid);
+    let pos = 0;
+    for (const rawTitle of data.subtasks ?? []) {
+      const trimmed = rawTitle.trim();
+      if (!trimmed) continue;
+      insertSubtask.run(todoId, trimmed, pos);
+      pos += 1;
+    }
+    return todoId;
   });
-  const row = db.prepare(`SELECT * FROM todos WHERE id = ?`).get(info.lastInsertRowid) as TodoRow;
+  const id = tx();
+  const row = db.prepare(`SELECT * FROM todos WHERE id = ?`).get(id) as TodoRow;
   res.status(201).json(hydrate(row));
 });
 
@@ -233,7 +266,15 @@ todosRouter.patch('/:id', async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Not found' });
 
   const patch = UpdateTodoSchema.parse(req.body);
-  const existingRaw = existing as unknown as { working_directory: string | null; task_type: string | null };
+  const existingRaw = existing as unknown as {
+    working_directory: string | null;
+    task_type: string | null;
+    preprompt: string | null;
+    saved_paths: string | null;
+  };
+  const mergedSavedPaths = patch.saved_paths !== undefined
+    ? (patch.saved_paths === null ? null : JSON.stringify(patch.saved_paths))
+    : existingRaw.saved_paths;
   const merged = {
     title: patch.title ?? existing.title,
     description: patch.description ?? existing.description,
@@ -243,10 +284,13 @@ todosRouter.patch('/:id', async (req, res) => {
     due_date: patch.due_date !== undefined ? patch.due_date : existing.due_date,
     working_directory: patch.working_directory !== undefined ? patch.working_directory : existingRaw.working_directory,
     task_type: patch.task_type ?? existingRaw.task_type ?? 'other',
+    preprompt: patch.preprompt !== undefined ? patch.preprompt : existingRaw.preprompt,
+    saved_paths: mergedSavedPaths,
   };
   db.prepare(
     `UPDATE todos SET title=@title, description=@description, status=@status, priority=@priority,
      tags=@tags, due_date=@due_date, working_directory=@working_directory, task_type=@task_type,
+     preprompt=@preprompt, saved_paths=@saved_paths,
      updated_at=datetime('now') WHERE id=@id`
   ).run({ ...merged, id });
 

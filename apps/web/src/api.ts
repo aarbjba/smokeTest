@@ -38,7 +38,8 @@ export const api = {
       return request<Todo[]>(`/todos${qs ? `?${qs}` : ''}`);
     },
     get:    (id: number) => request<Todo>(`/todos/${id}`),
-    create: (data: Partial<Todo>) => request<Todo>(`/todos`, { method: 'POST', body: JSON.stringify(data) }),
+    create: (data: Partial<Todo> & { subtasks?: string[] }) =>
+      request<Todo>(`/todos`, { method: 'POST', body: JSON.stringify(data) }),
     update: (id: number, data: Partial<Todo>) => request<Todo>(`/todos/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     // Soft delete by default (moves to Papierkorb). Pass { permanent: true } for hard delete.
     remove: (id: number, opts: { permanent?: boolean } = {}) =>
@@ -168,6 +169,26 @@ export const api = {
     backfill: () =>
       request<{ updated: number; scanned: number }>(`/repo-mappings/backfill`, { method: 'POST' }),
   },
+  fs: {
+    drives: () => request<{ drives: { name: string; path: string }[] }>(`/fs/drives`),
+    browse: (path: string) =>
+      request<{ path: string; parent: string | null; entries: { name: string; path: string }[] }>(
+        `/fs/browse?path=${encodeURIComponent(path)}`,
+      ),
+    list: (root: string, limit = 5000) =>
+      request<{
+        root: string;
+        entries: { path: string; type: 'file' | 'dir' }[];
+        truncated: boolean;
+        count: number;
+        limit: number;
+      }>(`/fs/list?root=${encodeURIComponent(root)}&limit=${limit}`),
+    pickFolder: (initial?: string) =>
+      request<{ path: string | null }>(`/fs/pick-folder`, {
+        method: 'POST',
+        body: JSON.stringify({ initial: initial ?? '' }),
+      }),
+  },
   queue: {
     list: () => request<QueueItem[]>(`/queue`),
     enqueue: (todoId: number, data: { prompt?: string; attachmentIds?: number[] } = {}) =>
@@ -196,10 +217,10 @@ export const api = {
       request<{ sessions: AgentSession[] }>(`/agent/sessions`),
     getSession: (todoId: number) =>
       request<{ session: AgentSession | null }>(`/agent/session/${todoId}`),
-    start: (todoId: number, prompt: string, cwd: string, attachmentIds: number[] = [], mode: 'work' | 'analyse' = 'work', includeAnalyses: boolean = false) =>
+    start: (todoId: number, prompt: string, cwd: string, attachmentIds: number[] = [], mode: 'work' | 'analyse' = 'work', includeAnalyses: boolean = false, includeSnippets: boolean = false) =>
       request<{ session: AgentSession }>(`/agent/session/${todoId}/start`, {
         method: 'POST',
-        body: JSON.stringify({ prompt, cwd, attachmentIds, mode, includeAnalyses }),
+        body: JSON.stringify({ prompt, cwd, attachmentIds, mode, includeAnalyses, includeSnippets }),
       }),
     send: (todoId: number, prompt: string, attachmentIds: number[] = []) =>
       request<{ session: AgentSession }>(`/agent/session/${todoId}/send`, {
@@ -208,6 +229,12 @@ export const api = {
       }),
     stop: (todoId: number) =>
       request<{ session: AgentSession | null }>(`/agent/session/${todoId}/stop`, { method: 'POST' }),
+    /** Nuclear: tree-kills claude + all descendants (MCP, sub-shells). */
+    kill: (todoId: number) =>
+      request<{ session: AgentSession | null }>(`/agent/session/${todoId}/kill`, { method: 'POST' }),
+    /** Soft: aborts current turn, keeps session context via --resume. */
+    interrupt: (todoId: number) =>
+      request<{ session: AgentSession | null }>(`/agent/session/${todoId}/interrupt`, { method: 'POST' }),
     clear: (todoId: number) =>
       request<void>(`/agent/session/${todoId}`, { method: 'DELETE' }),
     streamUrl: (todoId: number) => `/api/agent/session/${todoId}/stream`,

@@ -158,6 +158,14 @@ export function initDb() {
   // can evolve the enum without schema rebuilds.
   addColumnIfMissing('todos', 'task_type', `TEXT NOT NULL DEFAULT 'other'`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_todos_task_type ON todos(task_type)`);
+  // Per-todo preprompt override. When non-NULL this string replaces the
+  // global preprompt template (settings key 'agent.preprompt') for this todo
+  // only. Same {{placeholder}} syntax — see apps/api/src/services/claude-sessions.ts.
+  addColumnIfMissing('todos', 'preprompt', 'TEXT');
+  // Paths (relative to working_directory) the user has referenced in agent
+  // prompts. JSON array of strings; NULL or '[]' means "none". Used by the
+  // agent-panel path picker to show recently-used paths as quick chips.
+  addColumnIfMissing('todos', 'saved_paths', 'TEXT');
   // Seed positions for existing rows so ordering is stable.
   db.exec(`
     UPDATE todos SET position = id WHERE position = 0;

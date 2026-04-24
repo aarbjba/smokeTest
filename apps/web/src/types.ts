@@ -32,6 +32,12 @@ export interface Todo {
   queue_position?: number | null;
   queue_prompt?: string | null;
   queue_attachment_ids?: number[] | string | null;
+  // Per-todo preprompt override. NULL = fall back to global settings.
+  preprompt?: string | null;
+  // Paths the user has recently inserted with @-syntax in agent prompts.
+  // Relative to working_directory. Frontend keeps them in insertion order
+  // (most recent last) and caps at ~20 for the quick-chip UI.
+  saved_paths?: string[] | null;
 }
 
 export interface QueueItem {

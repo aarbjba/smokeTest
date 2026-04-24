@@ -17,13 +17,20 @@ export const TaskType = z.enum([
 
 export const CreateTodoSchema = z.object({
   title: z.string().min(1).max(500),
-  description: z.string().max(10_000).optional().default(''),
+  description: z.string().max(20_000).optional().default(''),
   status: TodoStatus.optional().default('todo'),
   priority: z.number().int().min(1).max(4).optional().default(2),
   tags: z.array(z.string().max(50)).optional().default([]),
   due_date: z.string().datetime().nullable().optional(),
   working_directory: z.string().max(1000).nullable().optional(),
   task_type: TaskType.optional().default('other'),
+  subtasks: z.array(z.string().min(1).max(500)).max(100).optional(),
+  // Per-todo preprompt override. NULL = fall back to global setting. Max
+  // 50k mirrors the runtime cap in the agent-start schema below.
+  preprompt: z.string().max(50_000).nullable().optional(),
+  // Paths relative to working_directory that the user has recently inserted
+  // via `@` syntax in the agent prompt. Capped at 200 entries.
+  saved_paths: z.array(z.string().max(1000)).max(200).nullable().optional(),
 });
 
 export const UpdateTodoSchema = CreateTodoSchema.partial();

@@ -14,6 +14,7 @@ import AttachmentPanel from '../components/AttachmentPanel.vue';
 import ClaudeAgent from '../components/ClaudeAgent.vue';
 import GitBranchButton from '../components/GitBranchButton.vue';
 import McpServersPanel from '../components/McpServersPanel.vue';
+import PathPicker from '../components/PathPicker.vue';
 import { linkifyStackTraceInHtml } from '../utils/linkifyStackTrace';
 
 const props = defineProps<{ id: string }>();
@@ -159,6 +160,96 @@ const renderedDescription = computed(() => {
   const html = marked.parse(src, { async: false }) as string;
   return linkifyStackTraceInHtml(html);
 });
+
+// Path picker integration for the description textarea — lets the user paste
+// `@path/to/file` references into their markdown description the same way
+// they can in the agent prompt. Helpful for linking source files the todo
+// relates to without manually typing the path.
+const descriptionTextareaRef = ref<HTMLTextAreaElement | null>(null);
+const descriptionPickerOpen = ref(false);
+const effectiveDescriptionCwd = computed(() =>
+  ((todo.value?.working_directory ?? '') || defaultWorkingDirectory.value || '').trim(),
+);
+
+function openDescriptionPicker() {
+  if (!effectiveDescriptionCwd.value) return;
+  descriptionPickerOpen.value = true;
+}
+function closeDescriptionPicker() {
+  descriptionPickerOpen.value = false;
+}
+
+function insertIntoDescription(snippet: string) {
+  if (!todo.value) return;
+  const ta = descriptionTextareaRef.value;
+  const current = todo.value.description ?? '';
+  if (ta && document.activeElement === ta) {
+    const pos = ta.selectionStart ?? current.length;
+    const end = ta.selectionEnd ?? pos;
+    const before = current.slice(0, pos);
+    const after = current.slice(end);
+    const needSpace = before.length > 0 && !/\s$/.test(before);
+    const insert = (needSpace ? ' ' : '') + snippet;
+    todo.value.description = before + insert + after;
+    const newCaret = (before + insert).length;
+    nextTick(() => {
+      ta.setSelectionRange(newCaret, newCaret);
+      ta.focus();
+    });
+  } else {
+    const sep = current.length > 0 && !current.endsWith('\n') ? '\n' : '';
+    todo.value.description = current + sep + snippet;
+  }
+}
+
+function onDescriptionPathSelected(path: string, type: 'file' | 'dir') {
+  insertIntoDescription('@' + path);
+  closeDescriptionPicker();
+  void type;
+}
+
+// Insert an attachment reference as markdown. Images get an `![alt](url)`
+// embed so the preview renders inline; everything else becomes a plain link.
+function insertAttachment(a: { id: number; filename: string; kind: string }) {
+  const url = api.attachments.previewUrl(a.id);
+  const snippet = a.kind === 'image'
+    ? `![${a.filename}](${url})`
+    : `[📎 ${a.filename}](${url})`;
+  insertIntoDescription(snippet);
+}
+
+// Popover state for the attachment picker — lists the todo's current
+// attachments so the user can insert a reference in one click.
+const attachmentPickerOpen = ref(false);
+const attachmentList = ref<Array<{ id: number; filename: string; kind: string }>>([]);
+
+async function toggleAttachmentPicker() {
+  if (attachmentPickerOpen.value) {
+    attachmentPickerOpen.value = false;
+    return;
+  }
+  try {
+    attachmentList.value = (await api.attachments.byTodo(todoId.value)).map((a) => ({
+      id: a.id, filename: a.filename, kind: a.kind,
+    }));
+  } catch {
+    attachmentList.value = [];
+  }
+  attachmentPickerOpen.value = true;
+}
+
+async function uploadIntoDescription(ev: Event) {
+  const files = (ev.target as HTMLInputElement).files;
+  if (!files || files.length === 0 || !todo.value) return;
+  try {
+    const created = await api.attachments.upload(todo.value.id, Array.from(files));
+    attachmentCount.value += created.length;
+    for (const a of created) insertAttachment({ id: a.id, filename: a.filename, kind: a.kind });
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  }
+  (ev.target as HTMLInputElement).value = '';
+}
 
 async function load() {
   loading.value = true;
@@ -563,16 +654,80 @@ const tabs = computed(() => [
             <div class="card description-card">
               <div class="description-head">
                 <h3 style="margin: 0;">📝 Beschreibung</h3>
-                <button type="button" class="ghost" @click="descriptionPreview = !descriptionPreview">
-                  {{ descriptionPreview ? 'Bearbeiten' : 'Vorschau' }}
-                </button>
+                <div class="row" style="gap: 0.3rem; position: relative;">
+                  <button
+                    v-if="!descriptionPreview"
+                    type="button"
+                    class="ghost"
+                    style="font-size: 0.78rem;"
+                    :disabled="editLocked || !effectiveDescriptionCwd"
+                    :title="effectiveDescriptionCwd ? 'Datei-/Ordnerpfad einfügen' : 'Kein Arbeitsverzeichnis gesetzt'"
+                    @click="openDescriptionPicker"
+                  >📂 Pfad</button>
+                  <button
+                    v-if="!descriptionPreview"
+                    type="button"
+                    class="ghost"
+                    style="font-size: 0.78rem;"
+                    :disabled="editLocked"
+                    title="Anhang einfügen"
+                    @click="toggleAttachmentPicker"
+                  >📎 Anhang</button>
+                  <label
+                    v-if="!descriptionPreview"
+                    class="ghost button-like"
+                    style="font-size: 0.78rem; cursor: pointer;"
+                    :class="{ disabled: editLocked }"
+                    title="Datei hochladen und direkt einfügen"
+                  >
+                    ⬆ Upload
+                    <input
+                      type="file"
+                      multiple
+                      style="display: none;"
+                      :disabled="editLocked"
+                      @change="uploadIntoDescription"
+                    />
+                  </label>
+                  <button type="button" class="ghost" @click="descriptionPreview = !descriptionPreview">
+                    {{ descriptionPreview ? 'Bearbeiten' : 'Vorschau' }}
+                  </button>
+                  <div v-if="attachmentPickerOpen" class="attachment-popover">
+                    <div class="row" style="justify-content: space-between; align-items: baseline;">
+                      <strong style="font-size: 0.85rem;">Anhang einfügen</strong>
+                      <button class="ghost" type="button" style="font-size: 0.75rem;" @click="attachmentPickerOpen = false">✕</button>
+                    </div>
+                    <div v-if="attachmentList.length === 0" class="empty" style="margin: 0.5rem 0;">
+                      Keine Anhänge. Nutze ⬆ Upload zum Hinzufügen.
+                    </div>
+                    <ul v-else class="attachment-popover-list">
+                      <li
+                        v-for="a in attachmentList"
+                        :key="a.id"
+                        @click="insertAttachment(a); attachmentPickerOpen = false"
+                      >
+                        <span>{{ a.kind === 'image' ? '🖼' : '📎' }}</span>
+                        <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ a.filename }}</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
               </div>
               <textarea
                 v-if="!descriptionPreview"
+                ref="descriptionTextareaRef"
                 v-model="todo.description"
                 :disabled="editLocked"
                 rows="18"
                 placeholder="Worum geht's? Markdown unterstützt…"
+              />
+              <PathPicker
+                v-if="!descriptionPreview"
+                :root="effectiveDescriptionCwd"
+                :open="descriptionPickerOpen"
+                anchor="inline"
+                @select="onDescriptionPathSelected"
+                @close="closeDescriptionPicker"
               />
               <div
                 v-else-if="renderedDescription"
@@ -791,5 +946,52 @@ const tabs = computed(() => [
 }
 .new-subtask-add {
   display: flex;
+}
+.attachment-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  z-index: 50;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  padding: 0.5rem;
+  width: 280px;
+}
+.attachment-popover-list {
+  list-style: none;
+  margin: 0.3rem 0 0 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.attachment-popover-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.attachment-popover-list li:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.button-like {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.85rem;
+}
+.button-like.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>
