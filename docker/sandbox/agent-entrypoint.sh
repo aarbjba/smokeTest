@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Required env:  GITHUB_TOKEN  ANTHROPIC_API_KEY  REPO_URL  BRANCH_NAME  TODO_TEXT  TASK_ID
+# Required env:  GITHUB_TOKEN  REPO_URL  BRANCH_NAME  TODO_TEXT  TASK_ID
 #                WERKBANK_API_URL  TODO_ID
+# Auth (either one):
+#   ANTHROPIC_API_KEY  — direct API key, or
+#   /home/node/.claude mounted volume with OAuth credentials from `claude login`
 # Optional:      BASE_BRANCH=develop  MAX_TURNS=40  TEST_CMD  CLAUDE_MODEL=claude-sonnet-4-5
 #                GIT_AUTHOR_NAME=claude-bot  GIT_AUTHOR_EMAIL=claude-bot@users.noreply.github.com
 
-: "${GITHUB_TOKEN:?}"; : "${ANTHROPIC_API_KEY:?}"; : "${REPO_URL:?}"
+: "${GITHUB_TOKEN:?}"; : "${REPO_URL:?}"
 : "${BRANCH_NAME:?}"; : "${TODO_TEXT:?}"; : "${TASK_ID:?}"
+: "${ANTHROPIC_API_KEY:=}"   # optional; Claude uses OAuth creds from ~/.claude when empty
 : "${BASE_BRANCH:=develop}"
 : "${MAX_TURNS:=40}"
 : "${GIT_AUTHOR_NAME:=claude-bot}"
