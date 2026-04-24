@@ -136,12 +136,16 @@ Expected: pulls the image on lp03, prints the hello-world banner, exits 0. `dock
 
 14. **`--security-opt no-new-privileges:true` conflicts with `sudo` in the entrypoint.** The image starts as the `node` user and invokes `sudo /usr/local/bin/init-firewall.sh` once at container start. `no-new-privileges` blocks the setuid transition that `sudo` needs, even with the passwordless sudoers entry. Omit this flag for now. Clean fix (tracked as a follow-up): restructure the entrypoint to start as root, run the firewall init directly, then drop to `node` via `gosu` — that removes the setuid transition and makes `no-new-privileges` compatible again. Tradeoff of omitting the flag: an in-container setuid escalation becomes theoretically possible, but the image has no SUID binaries and `--cap-drop=ALL` already prevents most abuse paths.
 
+15. **`--cap-drop=ALL` without re-adding sudo caps breaks the firewall-init sudo call.** The entrypoint needs `CAP_SETUID`, `CAP_SETGID`, and `CAP_AUDIT_WRITE` for sudo to transition and audit, plus `CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_FOWNER` so git can write credential-helper files and config under `/home/node`. The v2 plan's "drop ALL plus NET_ADMIN/NET_RAW" recipe was research-file gospel but did not account for the sudo-based entrypoint — the working cap set for the current entrypoint is `NET_ADMIN NET_RAW SETUID SETGID AUDIT_WRITE CHOWN DAC_OVERRIDE FOWNER`.
+
+16. **Anthropic `init-firewall.sh` GitHub-range fetch is fragile.** The script resolves GitHub's `/meta` API CIDR ranges and stuffs them into an ipset before flipping the OUTPUT policy to DROP. The fetch/resolve sometimes leaves `api.github.com` unreachable after the verify step ("Firewall verification failed — unable to reach https://api.github.com"). The image's entrypoint chain makes this terminal because the agent entrypoint never runs. Workarounds: (a) skip the firewall for trusted smoke-runs by overriding `--entrypoint /usr/local/bin/agent-entrypoint.sh`; (b) replace the script with a simpler hand-rolled iptables rule-set (allowlist: `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `api.anthropic.com`, `registry.npmjs.org`, `$WERKBANK_HOST`). Both are tracked as M1.5 follow-ups.
+
+17. **`/home/node` must be writable for git config/credential helper.** Dropping the `--tmpfs /home/node` from the run flags (to avoid a perceived conflict with the `/home/node/.claude` volume mount) breaks `git config --global ...` with "Read-only file system". Keep both: the `/home/node/.claude` volume mount is a nested submount under the `/home/node` tmpfs and they coexist cleanly on Linux.
+
 ---
 
 ## End-to-end manual run log
 
-Fill this after completing Task 1.6 (first full smoke run of the image against a real test repo).
-
 | Timestamp (UTC) | Exit code | Status | PR URL | Notes |
 |---|---|---|---|---|
-| | | | | |
+| 2026-04-24 10:30 | 0 | pushed | https://github.com/aarbjba/werkbank-sandbox-smoke/pull/1 | First smoke run. Ran against `aarbjba/werkbank-sandbox-smoke` with trivial `npm test`. Entry-point `/usr/local/bin/agent-entrypoint.sh` invoked directly (firewall bypassed per gotcha #16). OAuth creds via named volume `werkbank-claude-auth`. Cap set: `NET_ADMIN NET_RAW SETUID SETGID AUDIT_WRITE CHOWN DAC_OVERRIDE FOWNER`. Classic PAT with `repo` scope. |
