@@ -1,4 +1,4 @@
-import type { Todo, Snippet, Subtask, PomodoroSession, Integration, TodoStatus, Attachment, Recurrence, RecurrenceFrequency, McpServerConfig, RepoMapping, RepoMappingSource, Analysis, QueueItem } from './types';
+import type { Todo, Snippet, Subtask, PomodoroSession, Integration, TodoStatus, Attachment, Recurrence, RecurrenceFrequency, McpServerConfig, RepoMapping, RepoMappingSource, Analysis, QueueItem, SandboxRun } from './types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(`/api${path}`, {
@@ -211,6 +211,98 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ ordered_ids: orderedIds }),
       }),
+  },
+  sandbox: {
+    /**
+     * Kick off a sandbox run. Server returns the generated runId and whether
+     * the run is queued (slot cap hit) or launching immediately. Output lands
+     * on the shared agent SSE pipe — no separate stream subscription needed.
+     */
+    start: (
+      todoId: number,
+      data: {
+        prompt: string;
+        branchName?: string | null;
+        baseBranch?: string | null;
+        testCommand?: string | null;
+        maxTurns?: number | null;
+        timeoutMin?: number | null;
+        attachmentIds?: number[];
+        includeAnalyses?: boolean;
+        includeSnippets?: boolean;
+      },
+    ) =>
+      request<{ runId: string; queued: boolean }>(`/sandbox/${todoId}/start`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    stop: (todoId: number) =>
+      request<{ stopped: boolean }>(`/sandbox/${todoId}/stop`, { method: 'POST' }),
+    list: () => request<{ runs: SandboxRun[] }>(`/sandbox/list`),
+    testConnection: () =>
+      request<{ ok: boolean; werkbankReachable: boolean; detail: string }>(
+        `/sandbox/settings/test-connection`,
+        { method: 'POST' },
+      ),
+    /**
+     * Stream `docker build` output line-by-line via the SSE body of a POST.
+     * EventSource can't do POST, so we read the ReadableStream ourselves and
+     * parse SSE frames (`event: <name>\ndata: <json>\n\n`). `onChunk` fires for
+     * each build line; `onEnd` fires once with the final {ok, imageTag}.
+     */
+    rebuildImage: async (
+      onChunk: (text: string) => void,
+      onEnd: (result: { ok: boolean; imageTag?: string; error?: string }) => void,
+    ): Promise<void> => {
+      const resp = await fetch(`/api/sandbox/image/rebuild`, { method: 'POST' });
+      if (!resp.ok || !resp.body) {
+        const body = await resp.text().catch(() => '');
+        let msg = resp.statusText;
+        try { msg = JSON.parse(body).error ?? msg; } catch { /* ignore */ }
+        onEnd({ ok: false, error: `${resp.status}: ${msg}` });
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+      // Parse SSE frames: `event: <name>\ndata: <json>\n\n`. Empty line is the
+      // frame terminator. A frame may arrive across multiple reads so we keep
+      // a rolling buffer and split by `\n\n`.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let sepIdx;
+        while ((sepIdx = buffer.indexOf('\n\n')) >= 0) {
+          const frame = buffer.slice(0, sepIdx);
+          buffer = buffer.slice(sepIdx + 2);
+          if (!frame.trim() || frame.startsWith(':')) continue; // heartbeat
+          let event = 'message';
+          let data = '';
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('event:')) event = line.slice(6).trim();
+            else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).trim();
+          }
+          if (event === 'chunk') {
+            try {
+              const parsed = JSON.parse(data) as { text: string };
+              onChunk(parsed.text);
+            } catch { /* malformed frame — skip */ }
+          } else if (event === 'end') {
+            try {
+              const parsed = JSON.parse(data) as { ok: boolean; imageTag?: string; error?: string };
+              onEnd(parsed);
+            } catch {
+              onEnd({ ok: false, error: 'invalid end frame' });
+            }
+            return;
+          }
+        }
+      }
+      // Stream closed without an explicit end frame.
+      onEnd({ ok: false, error: 'stream closed without end event' });
+    },
   },
   agent: {
     list: () =>
