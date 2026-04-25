@@ -903,6 +903,11 @@ class SessionStore extends EventEmitter {
           if (c.type === 'text' && typeof c.text === 'string') {
             this.append(session, c.text, currentTurn);
           } else if (c.type === 'tool_use') {
+            if (c.name === 'propose_config') {
+              this.emit('propose-config', session.todoId, c.input?.partial_config ?? c.input);
+            } else if (c.name === 'finalize_config') {
+              this.emit('finalize-config', session.todoId, c.input);
+            }
             const summary = summarizeToolInput(c.name, c.input);
             this.append(session, `\n[tool: ${c.name}] ${summary}\n`, currentTurn);
           } else if (c.type === 'thinking' && typeof c.thinking === 'string' && c.thinking.trim()) {

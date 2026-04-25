@@ -91,6 +91,7 @@ onUnmounted(() => {
       <nav>
         <RouterLink to="/">Board</RouterLink>
         <RouterLink to="/pending">📥 Pendliste</RouterLink>
+        <RouterLink to="/swarm">⚡ Swarm</RouterLink>
         <RouterLink to="/papierkorb">🗑 Papierkorb</RouterLink>
         <RouterLink to="/settings">Einstellungen</RouterLink>
       </nav>

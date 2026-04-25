@@ -307,6 +307,88 @@ export const TASK_TYPES: TaskType[] = ['feature', 'bug', 'chore', 'customer', 'r
 // can distinguish in-app card reorder from external file drops.
 export const TODO_DRAG_TYPE = 'application/x-werkbank-todo';
 
+// ─── Swarm types ─────────────────────────────────────────────────────────────
+
+export type SwarmRunStatus = 'running' | 'done' | 'error' | 'aborted';
+
+export interface CoordinatorConfig {
+  id: string;
+  role: string;
+  systemPromptTemplate: string;
+  model: 'opus' | 'sonnet' | 'haiku';
+  toolPermissions: string[];
+  maxTurns?: number;
+  firstPrompt?: string;
+}
+
+export interface SwarmConfig {
+  goal: string;
+  coordinators: CoordinatorConfig[];
+  globalTokenLimit?: number;
+  timeoutMs?: number;
+}
+
+export interface SwarmConfigMeta {
+  id: number;
+  name: string;
+  goal: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SwarmRunMeta {
+  id: string;
+  goal: string;
+  status: SwarmRunStatus;
+  coordinator_count: number;
+  total_tokens: number;
+  started_at: string;
+  ended_at: string | null;
+  error_message: string | null;
+}
+
+export interface SwarmAgentMeta {
+  id: string;
+  run_id: string;
+  role: string;
+  model: string;
+  status: string;
+  turn_count: number;
+  started_at: number;
+  ended_at: number | null;
+  error_message: string | null;
+}
+
+export interface SwarmTokenSummary {
+  agent_id: string;
+  total_input: number;
+  total_output: number;
+  total_cache_read: number;
+  total_cache_write: number;
+}
+
+export interface SwarmBlackboardEntry {
+  key: string;
+  value: string;
+  version: number;
+  written_by: string;
+  written_at: number;
+}
+
+export const SWARM_RUN_STATUS_LABELS: Record<SwarmRunStatus, string> = {
+  running: 'Läuft',
+  done: 'Fertig',
+  error: 'Fehler',
+  aborted: 'Abgebrochen',
+};
+
+export const SWARM_RUN_STATUS_COLOR: Record<SwarmRunStatus, string> = {
+  running: '--accent',
+  done: '--success',
+  error: '--danger',
+  aborted: '--fg-muted',
+};
+
 // Per-todo MCP server config — matches Claude CLI --mcp-config shape,
 // minus the outer "mcpServers" wrapper. Stored as JSON on todos.mcp_servers.
 export interface McpServerConfig {

@@ -366,6 +366,62 @@ export const api = {
       request<void>(`/agent/session/${todoId}`, { method: 'DELETE' }),
     streamUrl: (todoId: number) => `/api/agent/session/${todoId}/stream`,
   },
+
+  swarm: {
+    architect: {
+      start: (goal?: string) =>
+        request<{ todoId: number; sessionStarted: boolean }>('/swarm/architect/start', {
+          method: 'POST',
+          body: JSON.stringify({ goal: goal ?? '' }),
+        }),
+      send: (todoId: number, message: string) =>
+        request<{ ok: boolean }>('/swarm/architect/send', {
+          method: 'POST',
+          body: JSON.stringify({ todoId, message }),
+        }),
+      clearSession: (todoId: number) =>
+        request<void>(`/swarm/architect/session/${todoId}`, { method: 'DELETE' }),
+      streamUrl: (todoId: number) => `/api/agent/session/${todoId}/stream`,
+    },
+    configs: {
+      list: () => request<{ configs: import('./types').SwarmConfigMeta[] }>('/swarm/configs'),
+      get: (id: number) =>
+        request<{ config: import('./types').SwarmConfigMeta & { config: import('./types').SwarmConfig } }>(`/swarm/configs/${id}`),
+      delete: (id: number) => request<void>(`/swarm/configs/${id}`, { method: 'DELETE' }),
+    },
+    runs: {
+      list: (params?: { limit?: number; offset?: number; status?: string }) => {
+        const sp = new URLSearchParams();
+        if (params?.limit !== undefined) sp.set('limit', String(params.limit));
+        if (params?.offset !== undefined) sp.set('offset', String(params.offset));
+        if (params?.status) sp.set('status', params.status);
+        const qs = sp.toString();
+        return request<{ runs: import('./types').SwarmRunMeta[]; total: number }>(
+          `/swarm/runs${qs ? `?${qs}` : ''}`,
+        );
+      },
+      get: (id: string) =>
+        request<{
+          run: import('./types').SwarmRunMeta & { config: import('./types').SwarmConfig };
+          agents: import('./types').SwarmAgentMeta[];
+          tokenSummary: import('./types').SwarmTokenSummary[];
+          eventCount: number;
+          blackboardKeyCount: number;
+        }>(`/swarm/runs/${id}`),
+      blackboard: (id: string, params?: { at_ts?: number; prefix?: string }) => {
+        const sp = new URLSearchParams();
+        if (params?.at_ts !== undefined) sp.set('at_ts', String(params.at_ts));
+        if (params?.prefix) sp.set('prefix', params.prefix);
+        const qs = sp.toString();
+        return request<{ snapshot_at: number | null; entries: import('./types').SwarmBlackboardEntry[] }>(
+          `/swarm/runs/${id}/blackboard${qs ? `?${qs}` : ''}`,
+        );
+      },
+      runFromConfigUrl: (configId: number) => `/api/swarm/run/${configId}`,
+      runInlineUrl: () => `/api/swarm/run`,
+      replayUrl: (id: string, speed = 1) => `/api/swarm/runs/${id}/replay?speed=${speed}`,
+    },
+  },
 };
 
 export interface StandupItem {

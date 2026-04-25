@@ -158,10 +158,22 @@ agentRouter.get('/session/:todoId/stream', (req, res: Response) => {
     write('turn-end', sessionSnapshot(session));
   };
 
+  const onProposeConfig = (id: number, config: unknown) => {
+    if (id !== todoId) return;
+    write('propose-config', { config });
+  };
+
+  const onFinalizeConfig = (id: number, input: unknown) => {
+    if (id !== todoId) return;
+    write('finalize-config', { input });
+  };
+
   claudeSessions.on('chunk', onChunk);
   claudeSessions.on('end', onEnd);
   claudeSessions.on('cleared', onCleared);
   claudeSessions.on('turn-end', onTurnEnd);
+  claudeSessions.on('propose-config', onProposeConfig);
+  claudeSessions.on('finalize-config', onFinalizeConfig);
 
   const heartbeat = setInterval(() => {
     res.write(':keepalive\n\n');
@@ -173,5 +185,7 @@ agentRouter.get('/session/:todoId/stream', (req, res: Response) => {
     claudeSessions.off('end', onEnd);
     claudeSessions.off('cleared', onCleared);
     claudeSessions.off('turn-end', onTurnEnd);
+    claudeSessions.off('propose-config', onProposeConfig);
+    claudeSessions.off('finalize-config', onFinalizeConfig);
   });
 });
