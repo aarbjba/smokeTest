@@ -94,6 +94,77 @@ server.tool(
   },
 );
 
+// ─── list_templates ──────────────────────────────────────────────────────────
+server.tool(
+  'list_templates',
+  'List available coordinator or subagent templates from the template library. Call this before designing new coordinators or subagents — reuse existing templates where possible.',
+  {
+    type: z.enum(['coordinators', 'subagents']).describe('Which template type to list'),
+  },
+  async ({ type }) => {
+    try {
+      const result = await apiCall<{ templates: Array<Record<string, unknown>> }>(
+        `/api/swarm/templates/${type}`,
+      );
+      // Return a compact summary: id, name, description, role/prompt excerpt
+      const summary = result.templates.map((t) => ({
+        id:          t['id'],
+        name:        t['name'],
+        description: t['description'],
+        ...(type === 'coordinators'
+          ? { role: t['role'], model: t['model'], max_turns: t['max_turns'] }
+          : { model: t['model'], tools: t['tools'], prompt_excerpt: typeof t['prompt'] === 'string' ? (t['prompt'] as string).slice(0, 120) + '…' : '' }),
+        usage_count: t['usage_count'],
+      }));
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ ok: true, type, count: summary.length, templates: summary }),
+        }],
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ ok: false, error: message }),
+        }],
+      };
+    }
+  },
+);
+
+// ─── use_template ─────────────────────────────────────────────────────────────
+server.tool(
+  'use_template',
+  'Fetch the full content of a specific coordinator or subagent template by ID. Use this to incorporate an existing template into the config being designed.',
+  {
+    type: z.enum(['coordinators', 'subagents']).describe('Template type'),
+    id:   z.number().int().positive().describe('Template ID from list_templates'),
+  },
+  async ({ type, id }) => {
+    try {
+      const result = await apiCall<{ template: Record<string, unknown> }>(
+        `/api/swarm/templates/${type}/${id}`,
+      );
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ ok: true, template: result.template }),
+        }],
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ ok: false, error: message }),
+        }],
+      };
+    }
+  },
+);
+
 // ─── Start ───────────────────────────────────────────────────────────────────
 const transport = new StdioServerTransport();
 await server.connect(transport);
