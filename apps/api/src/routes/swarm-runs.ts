@@ -46,7 +46,7 @@ swarmRunsRouter.post('/run', (req, res) => {
 
   runSwarm(config, (event: SwarmEvent) => write(event.type, event.data), abort.signal)
     .then(({ runId, status }) => {
-      write('swarm_end', { runId, status });
+      write('swarm:end', { runId, status });
       clearInterval(heartbeat);
       res.end();
     })
@@ -57,9 +57,9 @@ swarmRunsRouter.post('/run', (req, res) => {
     });
 });
 
-// ─── POST /run/:configId — start from saved config ───────────────────────────
+// ─── GET /run/:configId — start from saved config (EventSource-compatible) ───
 
-swarmRunsRouter.post('/run/:configId', (req, res) => {
+swarmRunsRouter.get('/run/:configId', (req, res) => {
   const configId = Number(req.params.configId);
   const row = mainDb.prepare('SELECT config_json FROM swarm_configs WHERE id = ?').get(configId) as
     { config_json: string } | undefined;
@@ -84,7 +84,7 @@ swarmRunsRouter.post('/run/:configId', (req, res) => {
 
   runSwarm(config, (event: SwarmEvent) => write(event.type, event.data), abort.signal)
     .then(({ runId, status }) => {
-      write('swarm_end', { runId, status });
+      write('swarm:end', { runId, status });
       clearInterval(heartbeat);
       res.end();
     })

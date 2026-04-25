@@ -35,9 +35,9 @@ onUnmounted(() => {
   if (activeEvtSource) { activeEvtSource.close(); activeEvtSource = null; }
 });
 
-function formatDate(s: string | null | undefined) {
+function formatDate(s: number | string | null | undefined) {
   if (!s) return '—';
-  const d = new Date(s.includes('T') ? s : s.replace(' ', 'T') + 'Z');
+  const d = typeof s === 'number' ? new Date(s * 1000) : new Date(String(s).includes('T') ? s : s + 'Z');
   return d.toLocaleString();
 }
 
@@ -71,16 +71,17 @@ function startRun(configId: number) {
   };
 
   const eventTypes = [
-    'swarm_start', 'swarm_end', 'agent_start', 'agent_end', 'agent_turn',
-    'tool_use', 'tool_result', 'blackboard_write', 'bus_send', 'bus_deliver',
-    'progress', 'terminate', 'token_update', 'error',
+    'swarm:start', 'swarm:end', 'coordinator:start', 'coordinator:text',
+    'coordinator:tool_call', 'coordinator:tool_result', 'coordinator:terminate',
+    'coordinator:error', 'coordinator:end', 'subagent:spawn', 'subagent:complete',
+    'blackboard:write', 'bus:message', 'progress', 'tokens', 'error',
   ];
 
   for (const t of eventTypes) {
     activeEvtSource.addEventListener(t, genericHandler(t));
   }
 
-  activeEvtSource.addEventListener('swarm_end', (e: MessageEvent) => {
+  activeEvtSource.addEventListener('swarm:end', (e: MessageEvent) => {
     const d = JSON.parse(e.data) as { runId?: string; status?: string };
     activeRunId.value = d.runId ?? null;
     activeRunStatus.value = (d.status as SwarmRunMeta['status']) ?? 'done';
@@ -118,18 +119,21 @@ function openReplay(runId: string) {
 
 function eventLabel(type: string): string {
   const map: Record<string, string> = {
-    swarm_start: '▶ Swarm gestartet',
-    swarm_end: '■ Swarm beendet',
-    agent_start: '→ Agent gestartet',
-    agent_end: '← Agent fertig',
-    agent_turn: '💬 Turn',
-    tool_use: '🔧 Tool',
-    blackboard_write: '📝 Blackboard',
-    bus_send: '📨 Bus senden',
-    bus_deliver: '📬 Bus geliefert',
+    'swarm:start': '▶ Swarm gestartet',
+    'swarm:end': '■ Swarm beendet',
+    'coordinator:start': '→ Coordinator gestartet',
+    'coordinator:text': '💬 Text',
+    'coordinator:tool_call': '🔧 Tool-Aufruf',
+    'coordinator:tool_result': '✅ Tool-Ergebnis',
+    'coordinator:terminate': '🛑 Terminieren',
+    'coordinator:error': '❌ Coordinator-Fehler',
+    'coordinator:end': '← Coordinator fertig',
+    'subagent:spawn': '🚀 Subagent gestartet',
+    'subagent:complete': '✓ Subagent fertig',
+    'blackboard:write': '📝 Blackboard',
+    'bus:message': '📨 Bus-Nachricht',
     progress: '⏳ Fortschritt',
-    terminate: '🛑 Terminieren',
-    token_update: '🪙 Token',
+    tokens: '🪙 Token',
     error: '❌ Fehler',
   };
   return map[type] ?? type;

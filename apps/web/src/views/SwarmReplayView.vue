@@ -95,9 +95,10 @@ function startReplay() {
   replayEvtSource.onmessage = (e) => push('message', e.data);
 
   const eventNames = [
-    'agent_start', 'agent_end', 'agent_turn', 'tool_use', 'tool_result',
-    'blackboard_write', 'bus_send', 'bus_deliver', 'progress', 'terminate',
-    'token_update', 'swarm_start', 'swarm_end', 'error', 'replay_end',
+    'swarm:start', 'swarm:end', 'coordinator:start', 'coordinator:text',
+    'coordinator:tool_call', 'coordinator:tool_result', 'coordinator:terminate',
+    'coordinator:error', 'coordinator:end', 'subagent:spawn', 'subagent:complete',
+    'blackboard:write', 'bus:message', 'progress', 'tokens', 'error', 'replay_end',
   ];
 
   for (const n of eventNames) {
@@ -125,9 +126,9 @@ function stopReplay() {
 
 function eventColor(type: string): string {
   if (type.includes('error')) return 'var(--danger)';
-  if (type === 'blackboard_write') return 'var(--success)';
-  if (type.startsWith('bus')) return 'var(--warning)';
-  if (type.startsWith('agent')) return 'var(--accent-2)';
+  if (type === 'blackboard:write') return 'var(--success)';
+  if (type.startsWith('bus:')) return 'var(--warning)';
+  if (type.startsWith('coordinator:') || type.startsWith('subagent:')) return 'var(--accent-2)';
   if (type.includes('tool')) return 'var(--fg-muted)';
   return 'var(--accent)';
 }

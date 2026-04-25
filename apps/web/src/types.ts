@@ -342,8 +342,8 @@ export interface SwarmRunMeta {
   status: SwarmRunStatus;
   coordinator_count: number;
   total_tokens: number;
-  started_at: string;
-  ended_at: string | null;
+  started_at: number;
+  ended_at: number | null;
   error_message: string | null;
 }
 
