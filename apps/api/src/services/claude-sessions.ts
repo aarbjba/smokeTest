@@ -295,7 +295,41 @@ Beschreibung:
 {{user_prompt}}
 `;
 
-export type AgentMode = 'work' | 'analyse' | 'sandbox';
+// Architect-mode template: interactive interview agent that builds a SwarmConfig.
+// The architect uses propose_config and finalize_config MCP tools to show live
+// previews and persist the final config. The {{user_goal}} placeholder is filled
+// with the initial goal string from the start request.
+const ARCHITECT_PREPROMPT = `Du bist ein Swarm-Architect. Deine Aufgabe: durch ein strukturiertes Interview eine SwarmConfig aufbauen, die der User dann ausführen kann.
+
+## Ablauf
+1. Verstehe das Ziel des Users (es ist im User-Prompt angegeben).
+2. Mach konkrete Vorschläge für Coordinator-Rollen — frag nicht stupide, sondern biete direkt eine sinnvolle Struktur an.
+3. Rufe **propose_config** auf, sobald du genug für einen ersten Entwurf hast. Das zeigt dem User eine Live-Vorschau.
+4. Verfeinere im Dialog. Nach jeder signifikanten Änderung: erneut propose_config aufrufen.
+5. Wenn der User zustimmt ("gut so", "ja", "passt", "mach das"): rufe **finalize_config** auf.
+
+## Config-Schema (Zod-Regeln)
+- \`goal\`: min. 5 Zeichen
+- \`coordinators\`: 1–10 Einträge, jede mit:
+  - \`id\`: lowercase-kebab-case, 3–31 Zeichen (Regex: /^[a-z][a-z0-9-]{2,30}$/)
+  - \`role\`: Kurzbeschreibung der Rolle
+  - \`model\`: "opus" | "sonnet" | "haiku"
+  - \`maxTurns\`: Ganzzahl > 0 (default 25)
+  - \`systemPromptTemplate\`: min. 20 Zeichen, MUSS {{goal}}, {{id}}, {{peer_ids}} enthalten
+  - \`toolPermissions\`: Objekt mit boolean-Flags (sendToPeer, checkInbox, readBlackboard, writeBlackboard, listBlackboard, reportProgress, terminate, spawnSubagents)
+  - \`subagents\`: Array (kann leer sein)
+- \`globalTokenLimit\`: default 5_000_000
+- \`timeoutMs\`: default 480_000 (8 Minuten)
+
+## Wichtige Hinweise
+- systemPromptTemplate für jeden Coordinator: erkläre dem Coordinator seinen Job, welche Tools er hat, wie er mit Peers kommuniziert. Die Platzhalter {{goal}}, {{id}}, {{peer_ids}}, {{run_id}}, {{role}} werden automatisch befüllt.
+- Maximal 3–4 Coordinators für die meisten Aufgaben — mehr ist selten besser.
+- finalize_config gibt bei Validierungsfehler einen strukturierten Fehler zurück — korrigiere die Config und versuche es erneut.
+
+## User-Ziel
+`;
+
+export type AgentMode = 'work' | 'analyse' | 'sandbox' | 'architect';
 
 function getPreprompt(mode: AgentMode, todoId: number): string {
   // Per-todo override takes precedence over the global setting. Only applied
@@ -330,6 +364,9 @@ function getPreprompt(mode: AgentMode, todoId: number): string {
     } catch {
       return SANDBOX_PREPROMPT;
     }
+  }
+  if (mode === 'architect') {
+    return ARCHITECT_PREPROMPT;
   }
   try {
     const row = db.prepare(`SELECT value FROM settings WHERE key = 'agent.preprompt'`).get() as { value: string } | undefined;
@@ -378,6 +415,13 @@ export function renderPreprompt(
   includeSnippets: boolean,
 ): string {
   const template = getPreprompt(mode, todoId);
+
+  // Architect mode: the template has no todo-specific placeholders — just
+  // append the user goal at the end and return early.
+  if (mode === 'architect') {
+    return template + (userPrompt || '(kein Ziel angegeben)');
+  }
+
   const todo = db.prepare(
     `SELECT id, title, description, status, sandbox_repo, working_directory FROM todos WHERE id = ?`,
   ).get(todoId) as TodoLite | undefined;

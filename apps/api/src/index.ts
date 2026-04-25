@@ -28,6 +28,8 @@ import { analysesRouter } from './routes/analyses.js';
 import { queueRouter } from './routes/queue.js';
 import { sandboxRouter } from './routes/sandbox.js';
 import { fsRouter } from './routes/fs.js';
+import { swarmRunsRouter } from './routes/swarm-runs.js';
+import { swarmArchitectRouter } from './routes/swarm-architect.js';
 import { startScheduler } from './services/scheduler.js';
 import { startRecurrenceScheduler } from './services/recurrence-generator.js';
 import { startQueueRunner } from './services/queue-runner.js';
@@ -65,6 +67,8 @@ app.use('/api/analyses', analysesRouter);
 app.use('/api/queue', queueRouter);
 app.use('/api/sandbox', sandboxRouter);
 app.use('/api/fs', fsRouter);
+app.use('/api/swarm', swarmRunsRouter);
+app.use('/api/swarm', swarmArchitectRouter);
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof ZodError) {

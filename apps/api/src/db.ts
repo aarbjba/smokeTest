@@ -128,6 +128,32 @@ export function initDb() {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_recurrences_next ON recurrences(next_fire_at);
+
+    CREATE TABLE IF NOT EXISTS swarm_configs (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL DEFAULT '',
+      goal        TEXT    NOT NULL,
+      config_json TEXT    NOT NULL,
+      created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS swarm_runs (
+      id                TEXT    PRIMARY KEY,
+      config_id         INTEGER REFERENCES swarm_configs(id) ON DELETE SET NULL,
+      config_json       TEXT    NOT NULL,
+      goal              TEXT    NOT NULL,
+      status            TEXT    NOT NULL DEFAULT 'running'
+                        CHECK(status IN ('running','done','error','aborted')),
+      db_path           TEXT    NOT NULL,
+      coordinator_count INTEGER NOT NULL DEFAULT 0,
+      total_tokens      INTEGER NOT NULL DEFAULT 0,
+      started_at        INTEGER NOT NULL DEFAULT (unixepoch()),
+      ended_at          INTEGER,
+      error_message     TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_swarm_runs_started ON swarm_runs(started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_swarm_runs_status  ON swarm_runs(status);
   `);
 
   // Lightweight migration: add columns that were added after the initial release.
