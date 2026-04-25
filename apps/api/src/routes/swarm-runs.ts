@@ -1,5 +1,5 @@
 import { Router, type Response } from 'express';
-import { existsSync, createReadStream } from 'node:fs';
+import { existsSync, createReadStream, unlinkSync } from 'node:fs';
 import { basename } from 'node:path';
 import { db as mainDb } from '../db.js';
 import { openRunDb, runDbPath } from '../services/swarm-db.js';
@@ -287,6 +287,19 @@ swarmRunsRouter.get('/runs/:id/db', (req, res) => {
   res.setHeader('Content-Type', 'application/octet-stream');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   createReadStream(run.db_path).pipe(res);
+});
+
+// ─── DELETE /runs/:id — remove run metadata + DB file ────────────────────────
+
+swarmRunsRouter.delete('/runs/:id', (req, res) => {
+  const run = mainDb.prepare('SELECT db_path FROM swarm_runs WHERE id = ?').get(req.params.id) as
+    { db_path: string } | undefined;
+  if (!run) { res.status(404).json({ error: 'Run not found' }); return; }
+  mainDb.prepare('DELETE FROM swarm_runs WHERE id = ?').run(req.params.id);
+  if (existsSync(run.db_path)) {
+    try { unlinkSync(run.db_path); } catch { /* ignore — file may be locked */ }
+  }
+  res.status(204).end();
 });
 
 // ─── Config CRUD ──────────────────────────────────────────────────────────────
