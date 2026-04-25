@@ -195,6 +195,11 @@ export function initDb() {
   // source_ref in resolveRepoUrl so the user can sandbox a locally-created
   // todo against any configured GitHub repo.
   addColumnIfMissing('todos', 'sandbox_repo', 'TEXT');
+  // Per-todo sandbox-backend override. NULL = use settings.sandbox.default_backend.
+  // Validated by Zod (SandboxBackendEnum) — same constraint-less-column pattern
+  // as task_type / sandbox_status, so adding a new backend later doesn't need
+  // a schema rebuild.
+  addColumnIfMissing('todos', 'sandbox_backend', 'TEXT');
   db.exec(`CREATE INDEX IF NOT EXISTS idx_todos_sandbox_status ON todos(sandbox_status)`);
   // Sandbox default settings. Stored as JSON (parsed via JSON.parse throughout
   // — see claude-sessions.ts:296) so numbers stay numbers and strings keep
@@ -209,6 +214,21 @@ export function initDb() {
   insertSetting.run('sandbox.claude_model', '"claude-sonnet-4-5"');
   insertSetting.run('sandbox.git_author_name', '"claude-bot"');
   insertSetting.run('sandbox.git_author_email', '"claude-bot@users.noreply.github.com"');
+  // Backend selector + AWS-microvm config. Defaults keep parity with the
+  // shipped lp03 setup; the AWS keys are seeded with empty strings / sane
+  // numbers so the AWS backend reports "not configured" instead of crashing
+  // when the user hasn't filled them in. See services/sandbox-aws.ts.
+  insertSetting.run('sandbox.default_backend', '"docker-lp03"');
+  insertSetting.run('sandbox.aws.ssh_host', '""');
+  insertSetting.run('sandbox.aws.ssh_key', '""');
+  insertSetting.run('sandbox.aws.containerd_socket', '"/run/firecracker-containerd/containerd.sock"');
+  insertSetting.run('sandbox.aws.runtime', '"aws.firecracker"');
+  insertSetting.run('sandbox.aws.image_tag', '"werkbank-sandbox:latest"');
+  insertSetting.run('sandbox.aws.pool_size', '2');
+  insertSetting.run('sandbox.aws.per_vm_max', '3');
+  insertSetting.run('sandbox.aws.werkbank_public_url', '""');
+  insertSetting.run('sandbox.aws.repo_path', '"/opt/werkbank"');
+  insertSetting.run('sandbox.aws.auth_volume', '"werkbank-claude-auth"');
   // Seed positions for existing rows so ordering is stable.
   db.exec(`
     UPDATE todos SET position = id WHERE position = 0;
@@ -262,7 +282,29 @@ function migrateTodosStatusCheck() {
   // statuses here when the enum grows.
   if (row.sql.includes("'test'") && row.sql.includes("'pending'")) return;
 
-  // Gather all columns from the existing table so we copy them verbatim.
+  // Derive the NEW DDL from the EXISTING one: only the CHECK on `status` is
+  // rewritten. This preserves every column (including the ones added via
+  // addColumnIfMissing — working_directory, sandbox_*, etc.) so the subsequent
+  // INSERT...SELECT has matching source/target shapes. Hard-coding a base
+  // schema here would drop all post-release columns on any DB that wasn't
+  // freshly created.
+  const currentDdl = row.sql;
+  const newDdl = currentDdl.replace(
+    /CHECK\s*\(\s*status\s+IN\s*\([^)]*\)\s*\)/i,
+    `CHECK(status IN ('todo','in_progress','test','done','pending'))`,
+  );
+  if (newDdl === currentDdl) {
+    throw new Error('[migration] could not rewrite status CHECK — unexpected todos DDL shape');
+  }
+  // Swap the target table name so the temporary table we create is called
+  // `todos_new`; we'll rename it into place after copying the data.
+  const newDdlForTemp = newDdl.replace(/^CREATE\s+TABLE\s+todos\b/i, 'CREATE TABLE todos_new');
+  if (newDdlForTemp === newDdl) {
+    throw new Error('[migration] could not target temp table name — unexpected todos DDL shape');
+  }
+
+  // Column list for the copy step: must match source; SQLite doesn't care
+  // about column order as long as names are given explicitly.
   const cols = db.prepare(`PRAGMA table_info(todos)`).all() as { name: string }[];
   const colList = cols.map((c) => c.name).join(', ');
 
@@ -270,29 +312,10 @@ function migrateTodosStatusCheck() {
   db.pragma('legacy_alter_table = 1');
   db.exec('BEGIN');
   try {
-    db.exec(`ALTER TABLE todos RENAME TO todos_old`);
-    db.exec(`
-      CREATE TABLE todos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL,
-        description TEXT DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo','in_progress','test','done','pending')),
-        priority INTEGER NOT NULL DEFAULT 2 CHECK(priority BETWEEN 1 AND 4),
-        tags TEXT NOT NULL DEFAULT '[]',
-        due_date TEXT,
-        source TEXT NOT NULL DEFAULT 'local' CHECK(source IN ('local','github','jira')),
-        source_ref TEXT,
-        source_url TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-        last_writeback_error TEXT,
-        last_writeback_at TEXT,
-        position INTEGER NOT NULL DEFAULT 0,
-        UNIQUE(source, source_ref)
-      )
-    `);
-    db.exec(`INSERT INTO todos (${colList}) SELECT ${colList} FROM todos_old`);
-    db.exec(`DROP TABLE todos_old`);
+    db.exec(newDdlForTemp);
+    db.exec(`INSERT INTO todos_new (${colList}) SELECT ${colList} FROM todos`);
+    db.exec(`DROP TABLE todos`);
+    db.exec(`ALTER TABLE todos_new RENAME TO todos`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_todos_status ON todos(status)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_todos_source ON todos(source)`);
     db.exec('COMMIT');

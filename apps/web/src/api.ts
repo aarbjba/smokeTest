@@ -1,4 +1,4 @@
-import type { Todo, Snippet, Subtask, SubtaskDraft, PomodoroSession, Integration, TodoStatus, Attachment, Recurrence, RecurrenceFrequency, McpServerConfig, RepoMapping, RepoMappingSource, Analysis, QueueItem, SandboxRun } from './types';
+import type { Todo, Snippet, Subtask, SubtaskDraft, PomodoroSession, Integration, TodoStatus, Attachment, Recurrence, RecurrenceFrequency, McpServerConfig, RepoMapping, RepoMappingSource, Analysis, QueueItem, SandboxRun, SandboxBackend } from './types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(`/api${path}`, {
@@ -258,6 +258,9 @@ export const api = {
         attachmentIds?: number[];
         includeAnalyses?: boolean;
         includeSnippets?: boolean;
+        // Optional one-shot backend override; omit to use the per-todo
+        // sandbox_backend column or the global default setting.
+        backend?: SandboxBackend;
       },
     ) =>
       request<{ runId: string; queued: boolean }>(`/sandbox/${todoId}/start`, {
@@ -267,11 +270,13 @@ export const api = {
     stop: (todoId: number) =>
       request<{ stopped: boolean }>(`/sandbox/${todoId}/stop`, { method: 'POST' }),
     list: () => request<{ runs: SandboxRun[] }>(`/sandbox/list`),
-    testConnection: () =>
-      request<{ ok: boolean; werkbankReachable: boolean; detail: string }>(
-        `/sandbox/settings/test-connection`,
+    testConnection: (backend?: SandboxBackend) => {
+      const qs = backend ? `?backend=${encodeURIComponent(backend)}` : '';
+      return request<{ ok: boolean; werkbankReachable: boolean; detail: string }>(
+        `/sandbox/settings/test-connection${qs}`,
         { method: 'POST' },
-      ),
+      );
+    },
     /**
      * Stream `docker build` output line-by-line via the SSE body of a POST.
      * EventSource can't do POST, so we read the ReadableStream ourselves and
@@ -281,8 +286,10 @@ export const api = {
     rebuildImage: async (
       onChunk: (text: string) => void,
       onEnd: (result: { ok: boolean; imageTag?: string; error?: string }) => void,
+      backend?: SandboxBackend,
     ): Promise<void> => {
-      const resp = await fetch(`/api/sandbox/image/rebuild`, { method: 'POST' });
+      const qs = backend ? `?backend=${encodeURIComponent(backend)}` : '';
+      const resp = await fetch(`/api/sandbox/image/rebuild${qs}`, { method: 'POST' });
       if (!resp.ok || !resp.body) {
         const body = await resp.text().catch(() => '');
         let msg = resp.statusText;

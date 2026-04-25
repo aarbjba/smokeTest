@@ -1,12 +1,31 @@
 import { Router, type Response } from 'express';
-import { SandboxStartSchema } from '../schemas.js';
+import { SandboxBackendEnum, SandboxStartSchema } from '../schemas.js';
 import {
   startSandboxRun,
   stopSandboxRun,
   listRuns,
   rebuildImage,
   testConnection,
+  type SandboxBackend,
 } from '../services/sandbox-runner.js';
+
+/**
+ * Pull the optional backend selector out of either the query string or the
+ * request body. Returns undefined if neither carries a valid value, so the
+ * caller can fall back to the default. Invalid values are rejected with a
+ * 400 via the Zod parse error.
+ */
+function parseBackendFromReq(query: unknown, body: unknown): SandboxBackend | undefined {
+  const candidate =
+    (query && typeof query === 'object' && 'backend' in query
+      ? (query as Record<string, unknown>).backend
+      : undefined) ??
+    (body && typeof body === 'object' && 'backend' in body
+      ? (body as Record<string, unknown>).backend
+      : undefined);
+  if (typeof candidate !== 'string' || candidate.length === 0) return undefined;
+  return SandboxBackendEnum.parse(candidate);
+}
 
 export const sandboxRouter = Router();
 
@@ -32,6 +51,8 @@ sandboxRouter.post('/:todoId/start', async (req, res) => {
       testCommand: data.testCommand,
       maxTurns: data.maxTurns,
       timeoutMin: data.timeoutMin,
+      // One-shot backend override; SandboxStartSchema validates the value.
+      backend: data.backend,
     });
     res.status(201).json(result);
   } catch (err) {
@@ -86,7 +107,10 @@ sandboxRouter.post('/image/rebuild', async (req, res: Response) => {
   });
 
   try {
-    const gen = rebuildImage();
+    // Backend may come from `?backend=…` (preferred — body is unused on this
+    // SSE-style POST) or `body.backend` if a future client switches.
+    const backend = parseBackendFromReq(req.query, req.body);
+    const gen = rebuildImage(backend);
     let next = await gen.next();
     while (!next.done) {
       if (clientGone) return;
@@ -109,9 +133,10 @@ sandboxRouter.post('/image/rebuild', async (req, res: Response) => {
   }
 });
 
-sandboxRouter.post('/settings/test-connection', async (_req, res) => {
+sandboxRouter.post('/settings/test-connection', async (req, res) => {
   try {
-    const result = await testConnection();
+    const backend = parseBackendFromReq(req.query, req.body);
+    const result = await testConnection(backend);
     res.json(result);
   } catch (err) {
     const status = (err as { status?: number })?.status ?? 500;

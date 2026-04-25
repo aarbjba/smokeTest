@@ -11,7 +11,14 @@ import { resolveAttachmentPaths } from '../routes/attachments.js';
 import { claudeSessions, renderPreprompt, treeKill } from './claude-sessions.js';
 
 const IS_WINDOWS = process.platform === 'win32';
-const CONTAINER_NAME_PREFIX = 'werkbank-sbx-';
+export const CONTAINER_NAME_PREFIX = 'werkbank-sbx-';
+
+// Backend kinds — extend the enum + dispatcher table below to add a new
+// runtime. Persisted on `todos.sandbox_backend` (per-todo override) and
+// `settings['sandbox.default_backend']` (global default). The Zod enum
+// (schemas.ts: SandboxBackendEnum) is the source of truth for validation.
+export type SandboxBackend = 'docker-lp03' | 'aws-microvm';
+export const DEFAULT_BACKEND: SandboxBackend = 'docker-lp03';
 
 // apps/api/{src|dist}/services → repo root: ../../../..
 const __dirname_es = dirname(fileURLToPath(import.meta.url));
@@ -25,7 +32,7 @@ const REPO_ROOT = resolve(__dirname_es, '../../../..');
  * claude-sessions.ts:296-302 — settings values are always JSON-encoded so a
  * bare string like `"werkbank-sandbox:latest"` comes out as an actual string.
  */
-function getSetting<T>(key: string, fallback: T): T {
+export function getSetting<T>(key: string, fallback: T): T {
   try {
     const row = db.prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as
       | { value: string }
@@ -38,14 +45,20 @@ function getSetting<T>(key: string, fallback: T): T {
   }
 }
 
-function getDockerContext(): string {
+export function getDockerContext(): string {
   return process.env.SANDBOX_DOCKER_CONTEXT || getSetting<string>('sandbox.docker_context', 'lp03');
 }
 
-function getImageTag(): string {
+export function getImageTag(): string {
   return (
     process.env.SANDBOX_IMAGE_TAG || getSetting<string>('sandbox.image_tag', 'werkbank-sandbox:latest')
   );
+}
+
+/** Repo-root path resolver — exported so AWS image rebuild can locate the
+ *  Dockerfile without re-implementing the dirname walk. */
+export function getRepoRoot(): string {
+  return REPO_ROOT;
 }
 
 function maxSlots(): number {
@@ -53,6 +66,34 @@ function maxSlots(): number {
   const n = typeof raw === 'number' ? raw : Number(raw);
   if (!Number.isFinite(n) || n < 1) return 1;
   return Math.floor(n);
+}
+
+function isBackend(v: unknown): v is SandboxBackend {
+  return v === 'docker-lp03' || v === 'aws-microvm';
+}
+
+/**
+ * Pick the backend to use for a given todo. Precedence:
+ *   1. Per-todo override on `todos.sandbox_backend`
+ *   2. Global setting `sandbox.default_backend`
+ *   3. Hard-coded fallback `DEFAULT_BACKEND` (docker-lp03)
+ *
+ * Reads the column directly so this stays cheap on the hot start path —
+ * loadTodo() runs anyway downstream, but resolving the backend BEFORE we
+ * commit to a launch lets us route the queue/release plumbing per-backend.
+ */
+export function resolveBackendForTodo(todoId: number): SandboxBackend {
+  try {
+    const row = db
+      .prepare(`SELECT sandbox_backend FROM todos WHERE id = ?`)
+      .get(todoId) as { sandbox_backend: string | null } | undefined;
+    if (row && isBackend(row.sandbox_backend)) return row.sandbox_backend;
+  } catch {
+    /* fall through to setting / default */
+  }
+  const setting = getSetting<string>('sandbox.default_backend', DEFAULT_BACKEND);
+  if (isBackend(setting)) return setting;
+  return DEFAULT_BACKEND;
 }
 
 // ─── Slug / resolvers ──────────────────────────────────────────────────────
@@ -74,7 +115,7 @@ function slugify(input: string, maxLen = 40): string {
   return window;
 }
 
-interface TodoRow {
+export interface TodoRow {
   id: number;
   title: string;
   source: 'local' | 'github' | 'jira';
@@ -91,7 +132,7 @@ interface TodoRow {
   tags: string | null;
 }
 
-function loadTodo(todoId: number): TodoRow {
+export function loadTodo(todoId: number): TodoRow {
   const row = db
     .prepare(
       `SELECT id, title, source, source_ref, source_url, branch_name, base_branch,
@@ -112,7 +153,7 @@ function loadTodo(todoId: number): TodoRow {
  * standard HTTPS repo URL. Non-github todos are rejected — sandbox currently
  * only supports GitHub because the entrypoint opens a GitHub PR.
  */
-function resolveRepoUrl(todo: TodoRow): string {
+export function resolveRepoUrl(todo: TodoRow): string {
   // Prefer the user-assigned sandbox_repo. Locally-created todos with no
   // GitHub sync origin can still be sandboxed by picking a target repo in
   // the detail view; the runner uses that over source_ref.
@@ -133,7 +174,7 @@ function resolveRepoUrl(todo: TodoRow): string {
 }
 
 /** Decrypt the stored GitHub PAT. Throws 400 if not configured. */
-function getGithubToken(): string {
+export function getGithubToken(): string {
   const row = db
     .prepare(
       `SELECT token_enc, token_iv, token_tag FROM integrations WHERE provider = 'github'`,
@@ -185,9 +226,12 @@ export interface SandboxStartOpts {
   testCommand?: string | null;
   maxTurns?: number;
   timeoutMin?: number;
+  // One-shot backend override for this run only. Does not persist on the
+  // todo. Falls back to resolveBackendForTodo(todoId) when omitted.
+  backend?: SandboxBackend;
 }
 
-interface RunSlot {
+export interface RunSlot {
   todoId: number;
   runId: string;
   containerName: string;
@@ -196,14 +240,19 @@ interface RunSlot {
   branch: string;
   baseBranch: string;
   timeoutMin: number;
+  backend: SandboxBackend;
   // Live handles — only populated once the slot is launched.
   logsChild?: ChildProcess;
   watchdog?: NodeJS.Timeout;
   cachedStatusLine?: string;
   envFilePath?: string;
+  // Backends may stash their own teardown handle (e.g. AWS pool releaser
+  // or a remote-tmpfile path to clean up). Opaque to the dispatcher; the
+  // backend reads it back during stop / release.
+  backendState?: unknown;
 }
 
-interface QueuedItem {
+export interface QueuedItem {
   todoId: number;
   prompt: string;
   opts: SandboxStartOpts;
@@ -213,9 +262,10 @@ interface QueuedItem {
   githubToken: string;
   runId: string;
   containerName: string;
+  backend: SandboxBackend;
 }
 
-interface EffectiveConfig {
+export interface EffectiveConfig {
   branch: string;
   baseBranch: string;
   testCommand: string | null;
@@ -227,8 +277,13 @@ interface EffectiveConfig {
   werkbankPublicUrl: string;
 }
 
-const activeRuns = new Map<number, RunSlot>();
+export const activeRuns = new Map<number, RunSlot>();
 const queue: QueuedItem[] = [];
+
+/** Slot count cap getter — exported so backends honour the same global cap. */
+export function getMaxSlots(): number {
+  return maxSlots();
+}
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -262,6 +317,7 @@ export async function startSandboxRun(
   // which the M1 agent-entrypoint accepts as an alternative to an API key.
 
   const effective = computeEffective(todo, opts);
+  const backend = opts.backend ?? resolveBackendForTodo(todoId);
 
   // 'sandbox' mode strips the werkbank-MCP workflow instructions that the
   // default 'work' preprompt injects. The container has no network path to
@@ -288,6 +344,7 @@ export async function startSandboxRun(
     githubToken,
     runId,
     containerName,
+    backend,
   };
 
   if (activeRuns.size >= maxSlots()) {
@@ -304,6 +361,7 @@ export async function startSandboxRun(
       branch: effective.branch,
       baseBranch: effective.baseBranch,
       timeoutMin: effective.timeoutMin,
+      backend,
     });
     queue.push(item);
     return { runId, queued: true };
@@ -314,8 +372,11 @@ export async function startSandboxRun(
   ).run(todoId);
 
   // Fire-and-forget — the caller doesn't await container lifecycle.
-  launchNow(item).catch((err) => {
-    console.error('[sandbox] launchNow failed:', err);
+  // Dispatch by backend. The Docker path stays internal to this module;
+  // AWS is dynamic-imported so the modules can reference shared exports
+  // without a load-time circular dependency.
+  void dispatchLaunch(item).catch((err) => {
+    console.error('[sandbox] launch failed:', err);
     try {
       db.prepare(
         `UPDATE todos SET sandbox_status = 'failed', updated_at = datetime('now') WHERE id = ?`,
@@ -329,17 +390,35 @@ export async function startSandboxRun(
   return { runId, queued: false };
 }
 
+async function dispatchLaunch(item: QueuedItem): Promise<void> {
+  if (item.backend === 'aws-microvm') {
+    const mod = await import('./sandbox-aws.js');
+    await mod.launchAwsNow(item);
+    return;
+  }
+  // Default / docker-lp03
+  await launchNow(item);
+}
+
 export function stopSandboxRun(todoId: number): { stopped: boolean } {
   const slot = activeRuns.get(todoId);
   if (!slot) return { stopped: false };
   if (slot.logsChild) {
     treeKill(slot.logsChild.pid);
   }
-  // Kill container on the remote context (best-effort).
-  try {
-    dockerSync(['--context', getDockerContext(), 'kill', slot.containerName]);
-  } catch {
-    /* ignore */
+  // Kill container — best-effort, dispatched by the slot's backend.
+  if (slot.backend === 'aws-microvm') {
+    // Fire-and-forget — stop must stay synchronous for HTTP, the container
+    // teardown can race in the background.
+    void import('./sandbox-aws.js').then((mod) => {
+      try { mod.killAwsContainer(slot.containerName); } catch { /* ignore */ }
+    }).catch(() => { /* ignore — module load failure is non-fatal here */ });
+  } else {
+    try {
+      dockerSync(['--context', getDockerContext(), 'kill', slot.containerName]);
+    } catch {
+      /* ignore */
+    }
   }
   try {
     db.prepare(
@@ -362,6 +441,7 @@ export function listRuns(): Array<{
   branch: string;
   baseBranch: string;
   timeoutMin: number;
+  backend: SandboxBackend;
 }> {
   return Array.from(activeRuns.values()).map((s) => ({
     todoId: s.todoId,
@@ -372,16 +452,29 @@ export function listRuns(): Array<{
     branch: s.branch,
     baseBranch: s.baseBranch,
     timeoutMin: s.timeoutMin,
+    backend: s.backend,
   }));
 }
 
 /**
- * Rebuild the sandbox image on the configured docker context. Streams `docker
- * build` stdout line-by-line so the caller can pipe it into an SSE response.
- * Yields stderr as `[build stderr] …` prefixed lines so consumers can tell
- * them apart without needing stderr isolation.
+ * Rebuild the sandbox image on the configured backend. Streams build stdout
+ * line-by-line so the caller can pipe it into an SSE response. Yields stderr
+ * as `[build stderr] …` prefixed lines so consumers can tell them apart
+ * without needing stderr isolation.
+ *
+ * Routes to the AWS backend (nerdctl-on-EC2 over SSH) when `backend` is
+ * 'aws-microvm', otherwise the original Docker-on-context build path.
  */
-export async function* rebuildImage(): AsyncGenerator<string, { ok: boolean; imageTag: string }, void> {
+export async function* rebuildImage(
+  backend: SandboxBackend = 'docker-lp03',
+): AsyncGenerator<string, { ok: boolean; imageTag: string }, void> {
+  if (backend === 'aws-microvm') {
+    const mod = await import('./sandbox-aws.js');
+    // `yield*` delegates AND returns the inner generator's return value,
+    // which is the {ok, imageTag} record we want to propagate to the SSE
+    // end frame.
+    return yield* mod.awsRebuildImage();
+  }
   const imageTag = getImageTag();
   const ctx = getDockerContext();
   // Build context is the repo root (where docker/sandbox/Dockerfile lives).
@@ -432,15 +525,22 @@ export async function* rebuildImage(): AsyncGenerator<string, { ok: boolean; ima
 }
 
 /**
- * Probe the configured werkbank public URL from inside the sandbox docker
- * context. Returns a small parsed result — UI shows "reachable" or the curl
- * detail so the user knows whether the container can reach back.
+ * Probe the configured werkbank public URL from inside the configured backend.
+ * Returns a small parsed result — UI shows "reachable" or the curl detail so
+ * the user knows whether the container can reach back. Routes to the AWS
+ * backend's reach-test when `backend === 'aws-microvm'`.
  */
-export async function testConnection(): Promise<{
+export async function testConnection(
+  backend: SandboxBackend = 'docker-lp03',
+): Promise<{
   ok: boolean;
   werkbankReachable: boolean;
   detail: string;
 }> {
+  if (backend === 'aws-microvm') {
+    const mod = await import('./sandbox-aws.js');
+    return mod.awsTestConnection();
+  }
   const ctx = getDockerContext();
   const url = getSetting<string>('sandbox.werkbank_public_url', '');
   if (!url) {
@@ -477,8 +577,20 @@ export async function testConnection(): Promise<{
  * on startup — a werkbank crash (or host reboot) can leave `--rm` containers
  * orphaned since --rm only fires on clean exit. Scoped by name prefix so we
  * never touch unrelated containers.
+ *
+ * Also dispatches the AWS backend's own sweep so EC2-side orphans are caught
+ * on the same boot tick. Failures of either backend are non-fatal — the
+ * docker context might be down, or the AWS host unset, both of which should
+ * not block werkbank from starting.
  */
 export async function sweepOrphans(): Promise<void> {
+  // Best-effort AWS sweep first — it's a no-op when no SSH host is configured.
+  try {
+    const mod = await import('./sandbox-aws.js');
+    await mod.awsSweepOrphans();
+  } catch {
+    /* ignore */
+  }
   const ctx = getDockerContext();
   const r = dockerSync([
     '--context',
@@ -502,7 +614,7 @@ export async function sweepOrphans(): Promise<void> {
 
 // ─── Internal: effective config + launch lifecycle ─────────────────────────
 
-function computeEffective(todo: TodoRow, opts: SandboxStartOpts): EffectiveConfig {
+export function computeEffective(todo: TodoRow, opts: SandboxStartOpts): EffectiveConfig {
   // Precedence: per-todo column → opts override → setting default.
   // Branch: opts → todo.branch_name → derived from title.
   const defaultBranch = deriveBranch(todo);
@@ -590,6 +702,7 @@ async function launchNow(item: QueuedItem): Promise<void> {
     containerName,
     startedAt: Date.now(),
     state: 'running',
+    backend: 'docker-lp03',
     branch: effective.branch,
     baseBranch: effective.baseBranch,
     timeoutMin: effective.timeoutMin,
@@ -875,7 +988,7 @@ async function pollContainerExit(ctx: string, containerName: string): Promise<nu
   return -1;
 }
 
-interface StatusPayload {
+export interface StatusPayload {
   status?: string;
   pr_url?: string;
 }
@@ -921,7 +1034,7 @@ function recoverStatusPayload(
 
 // status.json values the entrypoint writes. Map to the internal sandbox_status
 // enum; unknown values collapse to 'failed' to avoid storing forged strings.
-function mapPayloadStatus(
+export function mapPayloadStatus(
   s: string | undefined,
 ): { status: string; detail?: string } | null {
   switch (s) {
@@ -934,7 +1047,7 @@ function mapPayloadStatus(
   }
 }
 
-function mapExitToStatus(
+export function mapExitToStatus(
   exitCode: number,
   payload: StatusPayload | null,
 ): { status: string; prUrl?: string; detail?: string } {
@@ -981,7 +1094,7 @@ function killRun(todoId: number, reason: string): void {
   if (slot.logsChild) treeKill(slot.logsChild.pid);
 }
 
-function markFailedDb(todoId: number): void {
+export function markFailedDb(todoId: number): void {
   try {
     db.prepare(
       `UPDATE todos SET sandbox_status = 'failed', updated_at = datetime('now') WHERE id = ?`,
@@ -991,7 +1104,13 @@ function markFailedDb(todoId: number): void {
   }
 }
 
-function release(todoId: number): void {
+/**
+ * Release a slot and drain the queue. Exported so backends (specifically
+ * sandbox-aws.ts) can release their own slots without re-implementing the
+ * FIFO drain logic. The drain re-routes queued items through dispatchLaunch
+ * so AWS items end up in the AWS path even after they were queued.
+ */
+export function release(todoId: number): void {
   activeRuns.delete(todoId);
   // FIFO drain via setImmediate so we never recurse within the same tick.
   setImmediate(() => {
@@ -1001,8 +1120,8 @@ function release(todoId: number): void {
       db.prepare(
         `UPDATE todos SET sandbox_status = 'running', updated_at = datetime('now') WHERE id = ?`,
       ).run(next.todoId);
-      launchNow(next).catch((err) => {
-        console.error('[sandbox] queued launchNow failed:', err);
+      void dispatchLaunch(next).catch((err) => {
+        console.error('[sandbox] queued launch failed:', err);
         markFailedDb(next.todoId);
         release(next.todoId);
       });
@@ -1012,7 +1131,7 @@ function release(todoId: number): void {
 
 // ─── Env-file write helpers ────────────────────────────────────────────────
 
-function writeEnvFile(runId: string, env: Record<string, string>): string {
+export function writeEnvFile(runId: string, env: Record<string, string>): string {
   const dir = join(tmpdir(), 'werkbank-sandbox');
   mkdirSync(dir, { recursive: true });
   const path = join(dir, `${runId}.env`);
@@ -1032,7 +1151,7 @@ function writeEnvFile(runId: string, env: Record<string, string>): string {
   return path;
 }
 
-function safeUnlink(path: string): void {
+export function safeUnlink(path: string): void {
   try {
     unlinkSync(path);
   } catch {

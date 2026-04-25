@@ -19,6 +19,12 @@ export const TaskType = z.enum([
   'other',
 ]);
 
+// Sandbox backend selector — declared early because CreateTodoSchema below
+// references it as an optional column override. The full SandboxBackendEnum
+// re-export lower in the file is the same value (kept for readability of the
+// sandbox-related section).
+const SandboxBackendShape = z.enum(['docker-lp03', 'aws-microvm']);
+
 export const CreateTodoSchema = z.object({
   title: z.string().min(1).max(500),
   description: z.string().max(20_000).optional().default(''),
@@ -61,6 +67,9 @@ export const CreateTodoSchema = z.object({
   // Format `owner/name`; validated shallowly here and more strictly in the
   // runner. Max 200 mirrors source_ref.
   sandbox_repo: z.string().max(200).regex(/^[^\s/]+\/[^\s/]+$/, 'must be owner/name').nullable().optional(),
+  // Per-todo backend override. NULL clears the override so the global
+  // `settings.sandbox.default_backend` applies at run time.
+  sandbox_backend: SandboxBackendShape.nullable().optional(),
 });
 
 export const UpdateTodoSchema = CreateTodoSchema.partial();
@@ -213,6 +222,12 @@ export const SandboxStatusEnum = z.enum([
   'no_changes',
 ]);
 
+// Backend selector — picks where the sandbox container runs. Persisted on
+// `todos.sandbox_backend` (per-todo override) and `settings.sandbox.default_backend`
+// (global default). Source of truth for both the API payload and the runner's
+// dispatcher (services/sandbox-runner.ts: SandboxBackend).
+export const SandboxBackendEnum = SandboxBackendShape;
+
 export const SandboxStartSchema = z.object({
   prompt: z.string().min(1).max(50_000),
   attachmentIds: z.array(z.number().int().positive()).max(100).optional().default([]),
@@ -223,4 +238,7 @@ export const SandboxStartSchema = z.object({
   testCommand: z.string().max(500).nullable().optional(),
   maxTurns: z.number().int().min(1).max(200).optional(),
   timeoutMin: z.number().int().min(1).max(240).optional(),
+  // Optional one-shot override for this run; if omitted the runner falls back
+  // to the per-todo column then the global default setting.
+  backend: SandboxBackendEnum.optional(),
 });

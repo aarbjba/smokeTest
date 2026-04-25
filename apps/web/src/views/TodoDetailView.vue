@@ -3,8 +3,8 @@ import { onMounted, onUnmounted, ref, computed, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { marked } from 'marked';
 import { api } from '../api';
-import type { Todo, Snippet, TodoStatus, Analysis, TaskType, SandboxStatus, Integration, GitHubConfig } from '../types';
-import { STATUS_LABELS, STATUS_ICONS, TASK_TYPE_LABELS, TASK_TYPE_ICONS, TASK_TYPES, SANDBOX_STATUS_LABELS, SANDBOX_STATUS_COLOR } from '../types';
+import type { Todo, Snippet, TodoStatus, Analysis, TaskType, SandboxStatus, SandboxBackend, Integration, GitHubConfig } from '../types';
+import { STATUS_LABELS, STATUS_ICONS, TASK_TYPE_LABELS, TASK_TYPE_ICONS, TASK_TYPES, SANDBOX_STATUS_LABELS, SANDBOX_STATUS_COLOR, SANDBOX_BACKEND_LABELS } from '../types';
 import { computeAgentBranchName } from '../utils/branchName';
 import { useTodosStore } from '../stores/todos';
 import { useQueueStore } from '../stores/queue';
@@ -504,6 +504,18 @@ function onSandboxRepoChange(ev: Event) {
   const value = (ev.target as HTMLSelectElement).value;
   void saveSandboxField('sandbox_repo', value || null);
 }
+function onSandboxBackendChange(ev: Event) {
+  // Empty string ("Standard verwenden") clears the column so the runner
+  // falls back to settings.sandbox.default_backend.
+  const value = (ev.target as HTMLSelectElement).value;
+  void saveSandboxField('sandbox_backend', (value as SandboxBackend) || null);
+}
+
+// Backend options for the sandbox <select>. Values match the backend Zod enum.
+const SANDBOX_BACKEND_OPTIONS: Array<{ value: SandboxBackend; label: string }> = [
+  { value: 'docker-lp03', label: SANDBOX_BACKEND_LABELS['docker-lp03'] },
+  { value: 'aws-microvm', label: SANDBOX_BACKEND_LABELS['aws-microvm'] },
+];
 
 // Configured GitHub repos — populated from the GitHub integration so the user
 // can pick a sandbox target for locally-created todos that don't have a
@@ -966,6 +978,19 @@ const tabs = computed(() => [
                 >
                   <option value="">— nicht zugewiesen —</option>
                   <option v-for="r in configuredGithubRepos" :key="r" :value="r">{{ r }}</option>
+                </select>
+              </label>
+
+              <label class="stacked">
+                <span>Backend</span>
+                <select
+                  :value="todo.sandbox_backend ?? ''"
+                  :disabled="sandboxRunning"
+                  style="font-family: var(--font-mono); font-size: 0.85rem;"
+                  @change="onSandboxBackendChange"
+                >
+                  <option value="">— Standard verwenden —</option>
+                  <option v-for="b in SANDBOX_BACKEND_OPTIONS" :key="b.value" :value="b.value">{{ b.label }}</option>
                 </select>
               </label>
 

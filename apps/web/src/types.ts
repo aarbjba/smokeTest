@@ -53,7 +53,21 @@ export interface Todo {
   // todos that don't have a GitHub source_ref. Wins over source_ref in
   // resolveRepoUrl.
   sandbox_repo?: string | null;
+  // Per-todo backend override. NULL falls back to settings.sandbox.default_backend.
+  sandbox_backend?: SandboxBackend | null;
 }
+
+// Backend selector. Source of truth for the runner is in
+// apps/api/src/services/sandbox-runner.ts (SandboxBackend); kept in sync
+// here by hand because no shared-types package exists. Adding a new backend
+// requires updating this enum, the Zod enum (schemas.ts: SandboxBackendEnum),
+// the dispatcher table in sandbox-runner.ts, and SANDBOX_BACKEND_LABELS below.
+export type SandboxBackend = 'docker-lp03' | 'aws-microvm';
+
+export const SANDBOX_BACKEND_LABELS: Record<SandboxBackend, string> = {
+  'docker-lp03': '🏭 Docker (lp03)',
+  'aws-microvm': '☁️ AWS microVM',
+};
 
 export type SandboxStatus =
   | 'idle'
@@ -72,6 +86,7 @@ export interface SandboxRun {
   branch: string;
   baseBranch: string;
   timeoutMin: number;
+  backend: SandboxBackend;
 }
 
 export const SANDBOX_STATUS_LABELS: Record<SandboxStatus, string> = {

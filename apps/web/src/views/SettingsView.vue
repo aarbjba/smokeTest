@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue';
 import { api } from '../api';
-import type { Integration, GitHubConfig, JiraConfig, Recurrence, RecurrenceFrequency, RepoMapping, RepoMappingSource } from '../types';
-import { FREQUENCY_LABELS } from '../types';
+import type { Integration, GitHubConfig, JiraConfig, Recurrence, RecurrenceFrequency, RepoMapping, RepoMappingSource, SandboxBackend } from '../types';
+import { FREQUENCY_LABELS, SANDBOX_BACKEND_LABELS } from '../types';
 
 const integrations = ref<Integration[]>([]);
 const loading = ref(true);
@@ -500,12 +500,129 @@ async function rebuildSandboxImage() {
           flashMsg('err', `Build fehlgeschlagen: ${result.error ?? 'unbekannter Fehler'}`);
         }
       },
+      'docker-lp03',
     );
   } catch (e) {
     sandboxBuildActive.value = false;
     flashMsg('err', e instanceof Error ? e.message : String(e));
   }
 }
+
+// ─── AWS microVM backend settings ──────────────────────────────────────────
+// Kept as a separate reactive object from `sandbox` (lp03 docker) so each
+// blur saves only the touched key. SSH host is the trigger setting — empty
+// string means "AWS backend disabled". The runner reports a clear error if
+// any AWS-mode start happens with an unset host.
+const sandboxAws = ref({
+  default_backend: 'docker-lp03' as SandboxBackend,
+  ssh_host: '',
+  ssh_key: '',
+  containerd_socket: '/run/firecracker-containerd/containerd.sock',
+  runtime: 'aws.firecracker',
+  image_tag: 'werkbank-sandbox:latest',
+  pool_size: 2,
+  per_vm_max: 3,
+  werkbank_public_url: '',
+  repo_path: '/opt/werkbank',
+  auth_volume: 'werkbank-claude-auth',
+});
+
+const sandboxAwsBusy = ref(false);
+const sandboxAwsBuildLog = ref('');
+const sandboxAwsBuildActive = ref(false);
+
+async function loadSandboxAwsSettings() {
+  try {
+    const all = await api.settings.getAll();
+    const fallback = (key: string, dflt: string): string => {
+      const v = all[key];
+      return typeof v === 'string' ? v : dflt;
+    };
+    const fallbackNum = (key: string, dflt: number): number => {
+      const v = all[key];
+      return typeof v === 'number' ? v : dflt;
+    };
+    const candidate = all['sandbox.default_backend'];
+    sandboxAws.value = {
+      default_backend:
+        candidate === 'aws-microvm' || candidate === 'docker-lp03'
+          ? candidate
+          : 'docker-lp03',
+      ssh_host: fallback('sandbox.aws.ssh_host', ''),
+      ssh_key: fallback('sandbox.aws.ssh_key', ''),
+      containerd_socket: fallback(
+        'sandbox.aws.containerd_socket',
+        '/run/firecracker-containerd/containerd.sock',
+      ),
+      runtime: fallback('sandbox.aws.runtime', 'aws.firecracker'),
+      image_tag: fallback('sandbox.aws.image_tag', 'werkbank-sandbox:latest'),
+      pool_size: fallbackNum('sandbox.aws.pool_size', 2),
+      per_vm_max: fallbackNum('sandbox.aws.per_vm_max', 3),
+      werkbank_public_url: fallback('sandbox.aws.werkbank_public_url', ''),
+      repo_path: fallback('sandbox.aws.repo_path', '/opt/werkbank'),
+      auth_volume: fallback('sandbox.aws.auth_volume', 'werkbank-claude-auth'),
+    };
+  } catch (e) {
+    flashMsg('err', e instanceof Error ? e.message : String(e));
+  }
+}
+onMounted(loadSandboxAwsSettings);
+
+async function saveSandboxAwsKey(key: keyof typeof sandboxAws.value) {
+  try {
+    // The default_backend setting lives at sandbox.default_backend; everything
+    // else is namespaced under sandbox.aws.*.
+    const fullKey =
+      key === 'default_backend' ? 'sandbox.default_backend' : `sandbox.aws.${key}`;
+    await api.settings.set(fullKey, sandboxAws.value[key]);
+  } catch (e) {
+    flashMsg('err', e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function testSandboxAwsConnection() {
+  sandboxAwsBusy.value = true;
+  try {
+    const r = await api.sandbox.testConnection('aws-microvm');
+    if (r.ok && r.werkbankReachable) {
+      flashMsg('ok', `Werkbank vom AWS-Host erreichbar. ${r.detail}`);
+    } else {
+      flashMsg('err', `AWS-Sandbox-Reach-Test fehlgeschlagen — ${r.detail}`);
+    }
+  } catch (e) {
+    flashMsg('err', e instanceof Error ? e.message : String(e));
+  } finally {
+    sandboxAwsBusy.value = false;
+  }
+}
+
+async function rebuildSandboxAwsImage() {
+  if (sandboxAwsBuildActive.value) return;
+  sandboxAwsBuildActive.value = true;
+  sandboxAwsBuildLog.value = '';
+  try {
+    await api.sandbox.rebuildImage(
+      (text) => { sandboxAwsBuildLog.value += text; },
+      (result) => {
+        sandboxAwsBuildActive.value = false;
+        if (result.ok) {
+          flashMsg('ok', `AWS-Image gebaut: ${result.imageTag ?? '(kein Tag)'}`);
+        } else {
+          flashMsg('err', `AWS-Build fehlgeschlagen: ${result.error ?? 'unbekannter Fehler'}`);
+        }
+      },
+      'aws-microvm',
+    );
+  } catch (e) {
+    sandboxAwsBuildActive.value = false;
+    flashMsg('err', e instanceof Error ? e.message : String(e));
+  }
+}
+
+const SANDBOX_BACKEND_OPTIONS: Array<{ value: SandboxBackend; label: string }> = [
+  { value: 'docker-lp03', label: SANDBOX_BACKEND_LABELS['docker-lp03'] },
+  { value: 'aws-microvm', label: SANDBOX_BACKEND_LABELS['aws-microvm'] },
+];
 
 // Sandbox-Preprompt — short template without werkbank-MCP references. The
 // container has no network path to the werkbank MCP server, so the default
@@ -993,6 +1110,164 @@ const tabs: { id: TabId; label: string }[] = [
         v-if="sandboxBuildLog || sandboxBuildActive"
         class="sandbox-build-log"
       >{{ sandboxBuildLog || '(warte auf Build-Output…)' }}</pre>
+
+      <!-- ─── AWS microVM backend ──────────────────────────────────────── -->
+      <div style="margin-top: 2rem;">
+        <h4 style="margin: 0 0 0.25rem 0; font-family: var(--font-display);">☁️ AWS microVM Backend</h4>
+        <p style="color: var(--fg-muted); font-size: 0.8rem; margin: 0 0 0.75rem 0;">
+          Alternativ-Backend: Sandboxes laufen als nerdctl-Container in einer Firecracker-microVM auf einem EC2-Host (nested virt). Mehrere Todos teilen sich eine warme microVM via <code>firecracker.vm_id</code>-Annotation. Setup-Anleitung: <code>docs/sandbox-aws-setup.md</code>. Leeres SSH-Host = Backend deaktiviert.
+        </p>
+
+        <div class="sandbox-grid">
+          <label class="stacked">
+            <span>Standard-Backend</span>
+            <select
+              v-model="sandboxAws.default_backend"
+              style="font-family: var(--font-mono);"
+              @change="saveSandboxAwsKey('default_backend')"
+            >
+              <option v-for="b in SANDBOX_BACKEND_OPTIONS" :key="b.value" :value="b.value">{{ b.label }}</option>
+            </select>
+          </label>
+          <label class="stacked">
+            <span>SSH-Host (user@host)</span>
+            <input
+              v-model="sandboxAws.ssh_host"
+              type="text"
+              spellcheck="false"
+              placeholder="werkbank@ec2-…compute.amazonaws.com"
+              style="font-family: var(--font-mono);"
+              @blur="saveSandboxAwsKey('ssh_host')"
+              @keydown.enter.prevent="saveSandboxAwsKey('ssh_host')"
+            />
+          </label>
+          <label class="stacked">
+            <span>SSH-Key (Pfad, optional)</span>
+            <input
+              v-model="sandboxAws.ssh_key"
+              type="text"
+              spellcheck="false"
+              placeholder="leer = ssh-agent / Default"
+              style="font-family: var(--font-mono);"
+              @blur="saveSandboxAwsKey('ssh_key')"
+              @keydown.enter.prevent="saveSandboxAwsKey('ssh_key')"
+            />
+          </label>
+          <label class="stacked">
+            <span>containerd-Socket</span>
+            <input
+              v-model="sandboxAws.containerd_socket"
+              type="text"
+              spellcheck="false"
+              style="font-family: var(--font-mono);"
+              @blur="saveSandboxAwsKey('containerd_socket')"
+              @keydown.enter.prevent="saveSandboxAwsKey('containerd_socket')"
+            />
+          </label>
+          <label class="stacked">
+            <span>Runtime</span>
+            <input
+              v-model="sandboxAws.runtime"
+              type="text"
+              spellcheck="false"
+              placeholder="aws.firecracker"
+              style="font-family: var(--font-mono);"
+              @blur="saveSandboxAwsKey('runtime')"
+              @keydown.enter.prevent="saveSandboxAwsKey('runtime')"
+            />
+          </label>
+          <label class="stacked">
+            <span>Image-Tag</span>
+            <input
+              v-model="sandboxAws.image_tag"
+              type="text"
+              spellcheck="false"
+              placeholder="werkbank-sandbox:latest"
+              style="font-family: var(--font-mono);"
+              @blur="saveSandboxAwsKey('image_tag')"
+              @keydown.enter.prevent="saveSandboxAwsKey('image_tag')"
+            />
+          </label>
+          <label class="stacked">
+            <span>Pool-Größe (microVMs)</span>
+            <input
+              v-model.number="sandboxAws.pool_size"
+              type="number"
+              min="1"
+              max="32"
+              @blur="saveSandboxAwsKey('pool_size')"
+              @keydown.enter.prevent="saveSandboxAwsKey('pool_size')"
+            />
+          </label>
+          <label class="stacked">
+            <span>Container je microVM</span>
+            <input
+              v-model.number="sandboxAws.per_vm_max"
+              type="number"
+              min="1"
+              max="32"
+              @blur="saveSandboxAwsKey('per_vm_max')"
+              @keydown.enter.prevent="saveSandboxAwsKey('per_vm_max')"
+            />
+          </label>
+          <label class="stacked">
+            <span>Werkbank-URL (aus EC2 erreichbar)</span>
+            <input
+              v-model="sandboxAws.werkbank_public_url"
+              type="url"
+              spellcheck="false"
+              placeholder="https://tunnel.example.com"
+              style="font-family: var(--font-mono);"
+              @blur="saveSandboxAwsKey('werkbank_public_url')"
+              @keydown.enter.prevent="saveSandboxAwsKey('werkbank_public_url')"
+            />
+          </label>
+          <label class="stacked">
+            <span>Repo-Pfad auf EC2</span>
+            <input
+              v-model="sandboxAws.repo_path"
+              type="text"
+              spellcheck="false"
+              placeholder="/opt/werkbank"
+              style="font-family: var(--font-mono);"
+              @blur="saveSandboxAwsKey('repo_path')"
+              @keydown.enter.prevent="saveSandboxAwsKey('repo_path')"
+            />
+          </label>
+          <label class="stacked">
+            <span>Auth-Volume (containerd)</span>
+            <input
+              v-model="sandboxAws.auth_volume"
+              type="text"
+              spellcheck="false"
+              placeholder="werkbank-claude-auth"
+              style="font-family: var(--font-mono);"
+              @blur="saveSandboxAwsKey('auth_volume')"
+              @keydown.enter.prevent="saveSandboxAwsKey('auth_volume')"
+            />
+          </label>
+        </div>
+
+        <div class="row" style="margin-top: 1rem; gap: 0.5rem; flex-wrap: wrap;">
+          <button
+            class="primary"
+            :disabled="sandboxAwsBusy || !sandboxAws.ssh_host"
+            @click="testSandboxAwsConnection"
+            title="Startet einen Throwaway-Container auf dem EC2-Host und probiert, die Werkbank-URL zu erreichen"
+          >🔌 AWS-Erreichbarkeit testen</button>
+          <button
+            class="ghost"
+            :disabled="sandboxAwsBuildActive || !sandboxAws.ssh_host"
+            @click="rebuildSandboxAwsImage"
+            title="Baut das Sandbox-Image auf dem EC2-Host neu (per nerdctl); Log-Ausgabe streamt unten"
+          >🐳 AWS-Image neu bauen</button>
+        </div>
+
+        <pre
+          v-if="sandboxAwsBuildLog || sandboxAwsBuildActive"
+          class="sandbox-build-log"
+        >{{ sandboxAwsBuildLog || '(warte auf Build-Output…)' }}</pre>
+      </div>
 
       <div style="margin-top: 1.5rem;">
         <h4 style="margin: 0 0 0.25rem 0; font-family: var(--font-display);">Sandbox-Preprompt</h4>
