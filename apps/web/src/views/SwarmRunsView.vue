@@ -146,6 +146,9 @@ function eventLabel(type: string): string {
       <h1>⚡ Swarm</h1>
       <div class="sr-header-actions">
         <button class="ghost" @click="store.fetchRuns(); store.fetchConfigs()">⟳ Neu laden</button>
+        <button class="ghost" @click="router.push({ name: 'swarm-templates' })">
+          📚 Templates
+        </button>
         <button class="primary" @click="router.push({ name: 'swarm-architect' })">
           🏗 Neuer Architekt
         </button>

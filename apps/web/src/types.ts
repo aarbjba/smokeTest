@@ -397,3 +397,32 @@ export interface McpServerConfig {
   args?: string[];
   env?: Record<string, string>;
 }
+
+// ─── Swarm template library ───────────────────────────────────────────────────
+
+export interface CoordinatorTemplate {
+  id: number;
+  name: string;
+  description: string;
+  role: string;
+  model: 'opus' | 'sonnet' | 'haiku';
+  max_turns: number;
+  system_prompt_template: string;
+  tool_permissions: Record<string, boolean>;
+  created_at: string;
+  updated_at: string;
+  usage_count: number;
+}
+
+export interface SubagentTemplate {
+  id: number;
+  name: string;
+  description: string;
+  prompt: string;
+  model: 'opus' | 'sonnet' | 'haiku';
+  tools: string[];
+  output_schema: string | null;
+  created_at: string;
+  updated_at: string;
+  usage_count: number;
+}

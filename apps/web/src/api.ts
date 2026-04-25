@@ -1,4 +1,4 @@
-import type { Todo, Snippet, Subtask, SubtaskDraft, PomodoroSession, Integration, TodoStatus, Attachment, Recurrence, RecurrenceFrequency, McpServerConfig, RepoMapping, RepoMappingSource, Analysis, QueueItem, SandboxRun, SandboxBackend } from './types';
+import type { Todo, Snippet, Subtask, SubtaskDraft, PomodoroSession, Integration, TodoStatus, Attachment, Recurrence, RecurrenceFrequency, McpServerConfig, RepoMapping, RepoMappingSource, Analysis, QueueItem, SandboxRun, SandboxBackend, CoordinatorTemplate, SubagentTemplate } from './types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(`/api${path}`, {
@@ -420,6 +420,26 @@ export const api = {
       runFromConfigUrl: (configId: number) => `/api/swarm/run/${configId}`,
       runInlineUrl: () => `/api/swarm/run`,
       replayUrl: (id: string, speed = 1) => `/api/swarm/runs/${id}/replay?speed=${speed}`,
+    },
+    templates: {
+      coordinators: {
+        list:   () => request<{ templates: CoordinatorTemplate[] }>('/swarm/templates/coordinators'),
+        get:    (id: number) => request<{ template: CoordinatorTemplate }>(`/swarm/templates/coordinators/${id}`),
+        create: (data: Partial<CoordinatorTemplate>) =>
+          request<{ template: CoordinatorTemplate }>('/swarm/templates/coordinators', { method: 'POST', body: JSON.stringify(data) }),
+        update: (id: number, data: Partial<CoordinatorTemplate>) =>
+          request<{ template: CoordinatorTemplate }>(`/swarm/templates/coordinators/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+        delete: (id: number) => request<void>(`/swarm/templates/coordinators/${id}`, { method: 'DELETE' }),
+      },
+      subagents: {
+        list:   () => request<{ templates: SubagentTemplate[] }>('/swarm/templates/subagents'),
+        get:    (id: number) => request<{ template: SubagentTemplate }>(`/swarm/templates/subagents/${id}`),
+        create: (data: Partial<SubagentTemplate>) =>
+          request<{ template: SubagentTemplate }>('/swarm/templates/subagents', { method: 'POST', body: JSON.stringify(data) }),
+        update: (id: number, data: Partial<SubagentTemplate>) =>
+          request<{ template: SubagentTemplate }>(`/swarm/templates/subagents/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+        delete: (id: number) => request<void>(`/swarm/templates/subagents/${id}`, { method: 'DELETE' }),
+      },
     },
   },
 };
