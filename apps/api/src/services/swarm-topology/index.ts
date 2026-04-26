@@ -22,6 +22,7 @@ import { councilAsJudgeHandler } from './council-as-judge.js';
 import { groupchatHandler } from './groupchat.js';
 import { heavySwarmHandler } from './heavy-swarm.js';
 import { agentRearrangeHandler } from './agent-rearrange.js';
+import { graphWorkflowHandler } from './graph-workflow.js';
 
 export interface TopologyValidation {
   valid:  boolean;
@@ -49,6 +50,7 @@ const HANDLERS: Record<SwarmTopology, TopologyHandler> = {
   groupchat:           groupchatHandler,
   'heavy-swarm':       heavySwarmHandler,
   'agent-rearrange':   agentRearrangeHandler,
+  'graph-workflow':    graphWorkflowHandler,
 };
 
 export function getTopologyHandler(topology: SwarmTopology): TopologyHandler {

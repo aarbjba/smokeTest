@@ -54,6 +54,7 @@ export const SwarmTopology = z.enum([
   'groupchat',
   'heavy-swarm',
   'agent-rearrange',
+  'graph-workflow',
 ]);
 export type SwarmTopology = z.infer<typeof SwarmTopology>;
 
@@ -128,6 +129,19 @@ export const TopologyOptionsSchema = z.object({
   agentRearrangeLoops:        z.number().int().min(1).max(5).default(1),
   /** When true, the flow-aware collaborative prompt is applied to every coordinator (knows position, predecessors, successors). */
   agentRearrangePresetAgents: z.boolean().default(false),
+
+  // graph-workflow
+  /**
+   * Directed edges as [from, to] coordinator-id pairs. The handler computes
+   * topological layers (Kahn's algorithm); nodes within a layer run in
+   * parallel, layers run sequentially. Cycles are rejected at validate time.
+   * Empty edges = single-layer concurrent topology.
+   */
+  graphWorkflowEdges:         z.array(z.tuple([z.string(), z.string()])).default([]),
+  /** Number of times the full DAG is re-executed. Subsequent loops feed end-node outputs back as context for entry nodes. */
+  graphWorkflowLoops:         z.number().int().min(1).max(5).default(1),
+  /** When true, every coordinator's prompt is replaced by the kyegomez DAG-aware prompt (knows predecessors and successors in the graph). */
+  graphWorkflowPresetAgents:  z.boolean().default(false),
 }).partial().default({});
 export type TopologyOptions = z.infer<typeof TopologyOptionsSchema>;
 
