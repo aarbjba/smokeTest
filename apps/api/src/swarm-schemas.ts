@@ -41,7 +41,7 @@ export const CoordinatorConfigSchema = z.object({
 });
 export type CoordinatorConfig = z.infer<typeof CoordinatorConfigSchema>;
 
-export const SwarmTopology = z.enum(['concurrent', 'debate']);
+export const SwarmTopology = z.enum(['concurrent', 'debate-with-judge']);
 export type SwarmTopology = z.infer<typeof SwarmTopology>;
 
 /**

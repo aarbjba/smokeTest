@@ -321,8 +321,8 @@ const ARCHITECT_PREPROMPT = `Du bist Swarm-Architect. Dein Job: in wenigen Nachr
   - \`subagents\`: Array (kann leer sein), jeder Subagent hat: name, prompt, model, tools
 - \`globalTokenLimit\`: default 5_000_000
 - \`timeoutMs\`: default 480_000 (8 Minuten)
-- \`topology\`: "concurrent" (default) | "debate"
-- \`topologyOptions\`: {} oder { "debateRounds": 1–10, "debatePresetAgents": false } — nur für topology="debate" relevant
+- \`topology\`: "concurrent" (default) | "debate-with-judge"
+- \`topologyOptions\`: {} oder { "debateRounds": 1–10, "debatePresetAgents": false } — nur für topology="debate-with-judge" relevant
   - \`debatePresetAgents=true\` → Pro/Con/Judge benutzen eingebaute, gut getunte System-Prompts (kyegomez-Original portiert). Du musst trotzdem 3 Coordinators mit Roles "pro"/"con"/"judge" angeben (id, model, toolPermissions), aber systemPromptTemplate darf irgendein gültiger String sein — er wird vom Handler überschrieben.
 
 ## Topology-Auswahl (welche Schwarm-Architektur?)
@@ -330,7 +330,7 @@ const ARCHITECT_PREPROMPT = `Du bist Swarm-Architect. Dein Job: in wenigen Nachr
 ### topology: "concurrent" (default)
 Alle Coordinators laufen GLEICHZEITIG, kein Aggregator. Geeignet für: parallele Recherche, Hub-and-Spoke, jeden Workflow ohne harte Reihenfolge zwischen Coordinators. Das ist der Standardfall.
 
-### topology: "debate"
+### topology: "debate-with-judge"
 Drei Coordinators argumentieren in N Runden: Pro → Con → Judge. STRIKTE Anforderungen:
 - Genau 3 Coordinators
 - Roles MÜSSEN die Wörter "pro", "con", "judge" enthalten (z.B. "Pro-Argumentator", "Con-Position", "Judge")
@@ -356,7 +356,7 @@ Drei Coordinators argumentieren in N Runden: Pro → Con → Judge. STRIKTE Anfo
 \`\`\`json
 {
   "goal": "Sollten wir auf Microservices umsteigen?",
-  "topology": "debate",
+  "topology": "debate-with-judge",
   "topologyOptions": { "debateRounds": 3 },
   "coordinators": [
     {

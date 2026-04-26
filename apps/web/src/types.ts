@@ -321,7 +321,7 @@ export interface CoordinatorConfig {
   firstPrompt?: string;
 }
 
-export type SwarmTopology = 'concurrent' | 'debate';
+export type SwarmTopology = 'concurrent' | 'debate-with-judge';
 
 export interface SwarmTopologyOptions {
   debateRounds?: number;

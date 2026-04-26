@@ -170,8 +170,8 @@ function withPresetPrompt(coord: CoordinatorConfig, kind: 'pro' | 'con' | 'judge
 
 // ─── Handler ────────────────────────────────────────────────────────────────
 
-export const debateHandler: TopologyHandler = {
-  topology: 'debate',
+export const debateWithJudgeHandler: TopologyHandler = {
+  topology: 'debate-with-judge',
 
   validate(config: SwarmConfig): TopologyValidation {
     const errors: string[] = [];
@@ -200,7 +200,7 @@ export const debateHandler: TopologyHandler = {
       const isFinalRound = round === rounds;
 
       emitTopologyEvent(ctx, 'topology:phase_change', {
-        topology:    'debate',
+        topology:    'debate-with-judge',
         round,
         totalRounds: rounds,
         isFinalRound,

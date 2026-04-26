@@ -11,7 +11,7 @@
 import type { SwarmConfig, SwarmTopology } from '../../swarm-schemas.js';
 import type { RunContext } from '../swarm-runtime.js';
 import { concurrentHandler } from './concurrent.js';
-import { debateHandler } from './debate.js';
+import { debateWithJudgeHandler } from './debate-with-judge.js';
 
 export interface TopologyValidation {
   valid:  boolean;
@@ -27,8 +27,8 @@ export interface TopologyHandler {
 }
 
 const HANDLERS: Record<SwarmTopology, TopologyHandler> = {
-  concurrent: concurrentHandler,
-  debate:     debateHandler,
+  concurrent:          concurrentHandler,
+  'debate-with-judge': debateWithJudgeHandler,
 };
 
 export function getTopologyHandler(topology: SwarmTopology): TopologyHandler {
