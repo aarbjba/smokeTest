@@ -49,6 +49,8 @@ export const SwarmTopology = z.enum([
   'sequential',
   'hierarchical',
   'planner-worker',
+  'round-robin',
+  'council-as-judge',
 ]);
 export type SwarmTopology = z.infer<typeof SwarmTopology>;
 
@@ -84,6 +86,16 @@ export const TopologyOptionsSchema = z.object({
   // planner-worker
   /** When true, planner / worker / judge prompts are replaced by built-in role prompts. */
   plannerWorkerPresetAgents:  z.boolean().default(false),
+
+  // round-robin
+  /** Number of full passes over the (re-shuffled) coordinator list. */
+  roundRobinLoops:            z.number().int().min(1).max(10).default(1),
+  /** When true, every coordinator's prompt is replaced by the kyegomez collaborative round-robin prompt. */
+  roundRobinPresetAgents:     z.boolean().default(false),
+
+  // council-as-judge
+  /** When true, dimension judges and the aggregator get the kyegomez CouncilAsAJudge preset prompts (dimension picked from role substring). */
+  councilPresetAgents:        z.boolean().default(false),
 }).partial().default({});
 export type TopologyOptions = z.infer<typeof TopologyOptionsSchema>;
 

@@ -17,6 +17,8 @@ import { majorityVotingHandler } from './majority-voting.js';
 import { sequentialHandler } from './sequential.js';
 import { hierarchicalHandler } from './hierarchical.js';
 import { plannerWorkerHandler } from './planner-worker.js';
+import { roundRobinHandler } from './round-robin.js';
+import { councilAsJudgeHandler } from './council-as-judge.js';
 
 export interface TopologyValidation {
   valid:  boolean;
@@ -39,6 +41,8 @@ const HANDLERS: Record<SwarmTopology, TopologyHandler> = {
   sequential:          sequentialHandler,
   hierarchical:        hierarchicalHandler,
   'planner-worker':    plannerWorkerHandler,
+  'round-robin':       roundRobinHandler,
+  'council-as-judge':  councilAsJudgeHandler,
 };
 
 export function getTopologyHandler(topology: SwarmTopology): TopologyHandler {
