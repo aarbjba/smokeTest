@@ -129,13 +129,13 @@ function handleCoordinatorLine(agentId: string, raw: string, ctx: RunContext): v
 
           emitAndStore(ctx, agentId, 'coordinator:tool_call', {
             agentId, toolName, toolUseId,
-            input: JSON.stringify(input).slice(0, 500),
+            input: JSON.stringify(input),
           });
 
           // Semantic events for known swarm tools
           if (toolName === 'Task') {
-            const promptExcerpt = String(input['prompt'] ?? '').slice(0, 200);
-            emitAndStore(ctx, agentId, 'subagent:spawn', { agentId, toolUseId, promptExcerpt, parentId: agentId });
+            const prompt = String(input['prompt'] ?? '');
+            emitAndStore(ctx, agentId, 'subagent:spawn', { agentId, toolUseId, prompt, parentId: agentId });
             ctx.runDb.prepare(
               'INSERT OR IGNORE INTO agents (id, parent_id, role, model, kind, status, started_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
             ).run(toolUseId, agentId, 'subagent', '', 'subagent', 'running', Date.now());
@@ -149,12 +149,12 @@ function handleCoordinatorLine(agentId: string, raw: string, ctx: RunContext): v
           } else if (toolName === 'write_blackboard') {
             const key   = String(input['key'] ?? '');
             const value = String(input['value'] ?? '');
-            ctx.emitEvent({ type: 'blackboard:write', data: { agentId, key, valueExcerpt: value.slice(0, 200) } });
+            ctx.emitEvent({ type: 'blackboard:write', data: { agentId, key, value } });
           } else if (toolName === 'send_to_peer') {
             const to      = String(input['to_agent'] ?? '');
             const kind    = String(input['kind'] ?? 'send');
             const payload = String(input['payload'] ?? '');
-            ctx.emitEvent({ type: 'bus:message', data: { from: agentId, to, kind, payloadExcerpt: payload.slice(0, 200) } });
+            ctx.emitEvent({ type: 'bus:message', data: { from: agentId, to, kind, payload } });
           }
         }
       }
@@ -183,7 +183,7 @@ function handleCoordinatorLine(agentId: string, raw: string, ctx: RunContext): v
 
           emitAndStore(ctx, agentId, 'coordinator:tool_result', {
             agentId, toolUseId, toolName,
-            output: output.slice(0, 500),
+            output,
             isError,
           });
 
@@ -191,7 +191,7 @@ function handleCoordinatorLine(agentId: string, raw: string, ctx: RunContext): v
             const success = !isError;
             emitAndStore(ctx, agentId, 'subagent:complete', {
               agentId, toolUseId,
-              resultExcerpt: output.slice(0, 200),
+              result: output,
               success,
             });
             ctx.runDb.prepare(
@@ -271,9 +271,19 @@ export async function spawnCoordinator(
 
   const systemPrompt = renderCoordinatorPrompt(coordConfig, ctx, extraVars);
 
+  // One-shot spawn: pass the prompt as plain text via stdin (default
+  // --input-format=text). Claude processes the single prompt and exits when
+  // stdin reaches EOF. We keep --output-format=stream-json so we can parse
+  // the per-message event stream as before.
+  //
+  // We deliberately do NOT use --input-format=stream-json here, even though
+  // the architect session in claude-sessions.ts does. stream-json is for
+  // multi-turn interactive sessions where the runtime pushes follow-up turns;
+  // a coordinator is one-shot and self-terminates via the `terminate` MCP
+  // tool, so stream-json would just leave the process blocked on stdin until
+  // the global timeout aborted it.
   const args = [
     '-p',
-    '--input-format',  'stream-json',
     '--output-format', 'stream-json',
     '--verbose',
     '--dangerously-skip-permissions',
@@ -294,12 +304,10 @@ export async function spawnCoordinator(
     ctx.coordinatorPids.set(agentId, child.pid);
   }
 
-  // Submit initial turn (the system prompt as first user message)
-  const firstTurn = {
-    type: 'user',
-    message: { role: 'user', content: systemPrompt },
-  };
-  child.stdin?.write(JSON.stringify(firstTurn) + '\n', 'utf8');
+  // Plain-text prompt + EOF. Claude treats this as the single user message
+  // and exits when stdin closes (per --input-format=text default).
+  child.stdin?.write(systemPrompt, 'utf8');
+  child.stdin?.end();
 
   // Stream stdout line by line
   let stdoutBuffer = '';
@@ -313,8 +321,13 @@ export async function spawnCoordinator(
     }
   });
 
-  child.stderr?.on('data', (_chunk: Buffer) => {
-    // Silently consume stderr (MCP servers write to stderr)
+  let stderrBuf = '';
+  child.stderr?.on('data', (chunk: Buffer) => {
+    // MCP servers write to stderr; we capture it so a hard exit (no JSON
+    // events on stdout) leaves a diagnostic trail in the run-DB instead of
+    // an empty `coordinator:end` with exit code 1.
+    stderrBuf += chunk.toString('utf8');
+    if (stderrBuf.length > 16_384) stderrBuf = stderrBuf.slice(-16_384);
   });
 
   // Abort signal → kill process
@@ -343,7 +356,16 @@ export async function spawnCoordinator(
       ctx.abort.signal.removeEventListener('abort', onAbort);
       cleanupMcpConfigFile(mcpConfigPath);
 
+      // If the child exited non-zero without emitting any structured events,
+      // surface stderr so the run-DB explains *why* (auth failure, bad args,
+      // missing model, etc.) instead of forcing the operator to read logs.
       const turnCount = ctx.turnCounters.get(agentId) ?? 0;
+      if (exitCode !== 0 && turnCount === 0 && stderrBuf.trim()) {
+        emitAndStore(ctx, agentId, 'coordinator:error', {
+          agentId,
+          message: `child exited with code ${exitCode} before producing any output. stderr: ${stderrBuf.slice(-2000)}`,
+        });
+      }
       emitAndStore(ctx, agentId, 'coordinator:end', { agentId, exitCode, turnCount });
       ctx.runDb.prepare(
         'UPDATE agents SET status = ?, ended_at = ?, exit_code = ? WHERE id = ?'

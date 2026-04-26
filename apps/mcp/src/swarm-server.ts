@@ -65,7 +65,7 @@ server.tool(
         'INSERT INTO blackboard (key, value, version, written_by, written_at, is_current) VALUES (?, ?, ?, ?, ?, 1)'
       ).run(key, value, version, caller_id, now());
       if (!isInbox) {
-        insertEvent(caller_id, 'blackboard:write', { key, value_excerpt: value.slice(0, 200), version });
+        insertEvent(caller_id, 'blackboard:write', { key, value, version });
       }
       return version;
     });
@@ -147,7 +147,7 @@ server.tool(
       db.prepare(
         'INSERT INTO bus_messages (msg_id, from_agent, to_agent, kind, payload, reply_to, hop_count, sent_at, delivered) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)'
       ).run(msgId, caller_id, target, kind, payload, reply_to ?? null, hopCount, now());
-      insertEvent(caller_id, 'bus:message', { from: caller_id, to: target, kind, payload_excerpt: payload.slice(0, 200), hop_count: hopCount });
+      insertEvent(caller_id, 'bus:message', { from: caller_id, to: target, kind, payload, hop_count: hopCount });
       // Write to inbox blackboard key for check_inbox
       const inboxKey = `inbox:${target}:${msgId}`;
       db.prepare('UPDATE blackboard SET is_current = 0 WHERE key = ? AND is_current = 1').run(inboxKey);
@@ -372,7 +372,7 @@ server.tool(
     if (upd.changes === 0) {
       return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: false, error: 'task not claimed by this worker or already terminal' }) }] };
     }
-    insertEvent(worker_id, 'worker:complete_task', { task_id, result_excerpt: result.slice(0, 200) });
+    insertEvent(worker_id, 'worker:complete_task', { task_id, result });
     return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true }) }] };
   },
 );
@@ -397,7 +397,7 @@ server.tool(
     if (upd.changes === 0) {
       return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: false, error: 'task not claimed by this worker or already terminal' }) }] };
     }
-    insertEvent(worker_id, 'worker:fail_task', { task_id, error_msg: error_msg.slice(0, 200) });
+    insertEvent(worker_id, 'worker:fail_task', { task_id, error_msg });
     return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true }) }] };
   },
 );
