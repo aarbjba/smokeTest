@@ -53,6 +53,7 @@ export const SwarmTopology = z.enum([
   'council-as-judge',
   'groupchat',
   'heavy-swarm',
+  'agent-rearrange',
 ]);
 export type SwarmTopology = z.infer<typeof SwarmTopology>;
 
@@ -119,6 +120,14 @@ export const TopologyOptionsSchema = z.object({
   heavyLoops:                 z.number().int().min(1).max(5).default(1),
   /** When true, captain / specialist / synthesis prompts are replaced by built-in role prompts (specialists matched by role substring: research, analysis, alternatives, verification, with generic fallback). */
   heavyPresetAgents:          z.boolean().default(false),
+
+  // agent-rearrange
+  /** Flow-DSL string mapping execution order. "->" denotes sequential steps, "," within a step denotes parallel agents. Example: "research -> writer, reviewer -> editor". Required when topology=agent-rearrange. */
+  agentRearrangeFlow:         z.string().min(1).default(''),
+  /** Number of times the entire flow is re-executed. Subsequent loops see prior step outputs accumulated in the conversation. */
+  agentRearrangeLoops:        z.number().int().min(1).max(5).default(1),
+  /** When true, the flow-aware collaborative prompt is applied to every coordinator (knows position, predecessors, successors). */
+  agentRearrangePresetAgents: z.boolean().default(false),
 }).partial().default({});
 export type TopologyOptions = z.infer<typeof TopologyOptionsSchema>;
 
