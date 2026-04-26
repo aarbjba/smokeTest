@@ -88,6 +88,13 @@ export const TopologyOptionsSchema = z.object({
   // sequential
   /** Run a separate semantic-alignment judge after the pipeline. Requires one extra coordinator with role substring "drift" or "judge". */
   sequentialDriftDetection:   z.boolean().default(false),
+  /**
+   * Number of times the entire pipeline is re-executed. Mirrors max_loops
+   * from kyegomez sequential_workflow.py (delegated to AgentRearrange).
+   * Loop N+1's first stage receives loop N's final stage output as
+   * "previous_output" — enables iterative refinement of the same pipeline.
+   */
+  sequentialLoops:            z.number().int().min(1).max(5).default(1),
 
   // hierarchical
   maxDirectorLoops:           z.number().int().min(1).max(10).default(3),
@@ -97,6 +104,13 @@ export const TopologyOptionsSchema = z.object({
   // planner-worker
   /** When true, planner / worker / judge prompts are replaced by built-in role prompts. */
   plannerWorkerPresetAgents:  z.boolean().default(false),
+  /**
+   * Number of full Planner → Workers → Judge cycles. Mirrors max_loops
+   * from kyegomez planner_worker_swarm.py. The judge can early-break
+   * with is_complete=true; gaps and follow_up_instructions seed the
+   * next cycle's planner. Requires a judge coordinator when > 1.
+   */
+  plannerWorkerLoops:         z.number().int().min(1).max(5).default(1),
 
   // round-robin
   /** Number of full passes over the (re-shuffled) coordinator list. */

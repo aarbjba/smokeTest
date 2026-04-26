@@ -70,20 +70,28 @@ function readKey(ctx: RunContext, key: string): string {
   return row?.value ?? '';
 }
 
-function stageKey(stage: number, id: string): string {
-  return `sequential:stage_${stage}:${id}`;
+/**
+ * Per-stage blackboard key, namespaced by loop number so multi-loop runs
+ * don't clobber each other's stage outputs. Loop 1 still produces
+ * `sequential:loop_1:stage_1:<id>` etc. — the older single-key shape
+ * (`sequential:stage_<n>:<id>`) is intentionally not preserved because
+ * no existing topology consumer reads those keys outside this handler.
+ */
+function stageKey(loop: number, stage: number, id: string): string {
+  return `sequential:loop_${loop}:stage_${stage}:${id}`;
 }
 
-/** Build a JSON object {stageId → output} of every stage that has produced output so far. */
+/** Build a JSON object {stageId → output} of every stage that has produced output so far IN THIS LOOP. */
 function priorOutputsJson(
   ctx:                 RunContext,
+  loop:                number,
   completedThroughIdx: number,
   coordinators:        readonly CoordinatorConfig[],
 ): string {
   const out: Record<string, string> = {};
   for (let i = 0; i < completedThroughIdx; i++) {
     const c     = coordinators[i]!;
-    const value = readKey(ctx, stageKey(i + 1, c.id));
+    const value = readKey(ctx, stageKey(loop, i + 1, c.id));
     if (value) out[c.id] = value;
   }
   return JSON.stringify(out);
@@ -121,6 +129,7 @@ export const sequentialHandler: TopologyHandler = {
 
   async run(ctx: RunContext): Promise<void> {
     const driftEnabled = ctx.config.topologyOptions?.sequentialDriftDetection ?? false;
+    const totalLoops   = ctx.config.topologyOptions?.sequentialLoops          ?? 1;
     const judge        = driftEnabled ? findDriftJudge(ctx.config.coordinators) : null;
 
     // Pipeline = all coordinators except the (optional) drift judge, in array order.
@@ -130,51 +139,78 @@ export const sequentialHandler: TopologyHandler = {
 
     const totalStages = pipeline.length;
 
-    for (let idx = 0; idx < pipeline.length; idx++) {
+    // Outer loop carries the previous loop's final stage output forward
+    // as "previous_output" seed for the next loop's stage 1 — mirrors
+    // AgentRearrange.run() max_loops semantics (agent_rearrange.py:662).
+    let priorLoopFinal = '';
+
+    for (let loop = 1; loop <= totalLoops; loop++) {
       if (ctx.abort.signal.aborted) break;
 
-      const coord    = pipeline[idx]!;
-      const stage    = idx + 1;
-      const previous = idx === 0
-        ? ''
-        : readKey(ctx, stageKey(stage - 1, pipeline[idx - 1]!.id));
+      if (totalLoops > 1) {
+        emitTopologyEvent(ctx, 'topology:phase_change', {
+          topology:   'sequential',
+          phase:      'loop_start',
+          loop,
+          totalLoops,
+        });
+      }
 
-      emitTopologyEvent(ctx, 'topology:phase_change', {
-        topology:    'sequential',
-        phase:       'stage',
-        stage,
-        totalStages,
-        coordinatorId: coord.id,
-      });
+      for (let idx = 0; idx < pipeline.length; idx++) {
+        if (ctx.abort.signal.aborted) break;
 
-      await spawnCoordinator(coord, ctx, {
-        previous_output:    previous || '(no prior stage — you are the first stage of this pipeline)',
-        stage:              String(stage),
-        total_stages:       String(totalStages),
-        prior_outputs_json: priorOutputsJson(ctx, idx, pipeline),
-        stage_output_key:   stageKey(stage, coord.id),
-        max_turns_hint:     String(coord.maxTurns ?? 8),
-      });
+        const coord = pipeline[idx]!;
+        const stage = idx + 1;
+
+        // Stage 1 input: prior loop's final stage output (empty string on loop 1).
+        // Stage N>1 input: this loop's previous stage output.
+        const previous = idx === 0
+          ? priorLoopFinal
+          : readKey(ctx, stageKey(loop, stage - 1, pipeline[idx - 1]!.id));
+
+        emitTopologyEvent(ctx, 'topology:phase_change', {
+          topology:      'sequential',
+          phase:         'stage',
+          loop,
+          totalLoops,
+          stage,
+          totalStages,
+          coordinatorId: coord.id,
+        });
+
+        await spawnCoordinator(coord, ctx, {
+          previous_output:    previous || '(no prior stage — you are the first stage of this pipeline)',
+          stage:              String(stage),
+          total_stages:       String(totalStages),
+          loop:               String(loop),
+          total_loops:        String(totalLoops),
+          prior_outputs_json: priorOutputsJson(ctx, loop, idx, pipeline),
+          stage_output_key:   stageKey(loop, stage, coord.id),
+          max_turns_hint:     String(coord.maxTurns ?? 8),
+        });
+      }
+      if (ctx.abort.signal.aborted) break;
+
+      // Snapshot this loop's final stage output for the next loop's stage 1.
+      const finalCoord = pipeline[pipeline.length - 1]!;
+      priorLoopFinal   = readKey(ctx, stageKey(loop, pipeline.length, finalCoord.id));
     }
 
     if (!judge || ctx.abort.signal.aborted) return;
 
-    // Drift detection: a single judging pass over the final stage's output.
-    const finalStage  = pipeline.length;
-    const finalCoord  = pipeline[finalStage - 1]!;
-    const finalOutput = readKey(ctx, stageKey(finalStage, finalCoord.id));
-
+    // Drift detection: a single judging pass over the FINAL loop's final stage output.
+    // The last value of priorLoopFinal already holds it.
     emitTopologyEvent(ctx, 'topology:phase_change', {
       topology:    'sequential',
       phase:       'drift_check',
-      stage:       finalStage + 1,
-      totalStages: finalStage,
+      stage:       pipeline.length + 1,
+      totalStages: pipeline.length,
     });
 
     const judgeCoord = withPresetDriftJudgePrompt(judge);
     await spawnCoordinator(judgeCoord, ctx, {
-      final_output:    finalOutput || '(empty — final stage produced no blackboard output)',
-      total_stages:    String(finalStage),
+      final_output:    priorLoopFinal || '(empty — final stage produced no blackboard output)',
+      total_stages:    String(pipeline.length),
       max_turns_hint:  String(judge.maxTurns ?? 4),
     });
   },
