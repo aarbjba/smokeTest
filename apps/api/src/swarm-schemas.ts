@@ -51,8 +51,16 @@ export const SwarmTopology = z.enum([
   'planner-worker',
   'round-robin',
   'council-as-judge',
+  'groupchat',
 ]);
 export type SwarmTopology = z.infer<typeof SwarmTopology>;
+
+export const GroupchatSpeakerStrategy = z.enum([
+  'round-robin',     // every agent speaks in array order (shifted per loop)
+  'random',          // ONE random agent per loop (mirrors kyegomez _process_random_speaker)
+  'random-dynamic',  // first speaker random, subsequent picked from @mentions in prior contributions
+]);
+export type GroupchatSpeakerStrategy = z.infer<typeof GroupchatSpeakerStrategy>;
 
 /**
  * Per-topology tuning. Each handler reads only the keys it cares about.
@@ -96,6 +104,14 @@ export const TopologyOptionsSchema = z.object({
   // council-as-judge
   /** When true, dimension judges and the aggregator get the kyegomez CouncilAsAJudge preset prompts (dimension picked from role substring). */
   councilPresetAgents:        z.boolean().default(false),
+
+  // groupchat
+  /** Number of conversation loops. Per loop the speaker strategy decides who talks. */
+  groupchatLoops:             z.number().int().min(1).max(10).default(1),
+  /** Speaker selection strategy per loop. */
+  groupchatSpeakerStrategy:   GroupchatSpeakerStrategy.default('round-robin'),
+  /** When true, every coordinator's prompt is replaced by the kyegomez group-chat collaborative prompt with @mention instructions. */
+  groupchatPresetAgents:      z.boolean().default(false),
 }).partial().default({});
 export type TopologyOptions = z.infer<typeof TopologyOptionsSchema>;
 

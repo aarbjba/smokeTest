@@ -19,6 +19,7 @@ import { hierarchicalHandler } from './hierarchical.js';
 import { plannerWorkerHandler } from './planner-worker.js';
 import { roundRobinHandler } from './round-robin.js';
 import { councilAsJudgeHandler } from './council-as-judge.js';
+import { groupchatHandler } from './groupchat.js';
 
 export interface TopologyValidation {
   valid:  boolean;
@@ -43,6 +44,7 @@ const HANDLERS: Record<SwarmTopology, TopologyHandler> = {
   'planner-worker':    plannerWorkerHandler,
   'round-robin':       roundRobinHandler,
   'council-as-judge':  councilAsJudgeHandler,
+  groupchat:           groupchatHandler,
 };
 
 export function getTopologyHandler(topology: SwarmTopology): TopologyHandler {
