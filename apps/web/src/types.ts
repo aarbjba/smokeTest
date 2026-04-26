@@ -328,7 +328,15 @@ export type SwarmTopology =
   | 'majority-voting'
   | 'sequential'
   | 'hierarchical'
-  | 'planner-worker';
+  | 'planner-worker'
+  | 'round-robin'
+  | 'council-as-judge'
+  | 'groupchat'
+  | 'heavy-swarm'
+  | 'agent-rearrange'
+  | 'graph-workflow';
+
+export type GroupchatSpeakerStrategy = 'round-robin' | 'random' | 'random-dynamic';
 
 export interface SwarmTopologyOptions {
   debateRounds?: number;
@@ -338,9 +346,44 @@ export interface SwarmTopologyOptions {
   majorityLoops?: number;
   majorityPresetConsensus?: boolean;
   sequentialDriftDetection?: boolean;
+  sequentialLoops?: number;
   maxDirectorLoops?: number;
   hierarchicalPresetAgents?: boolean;
   plannerWorkerPresetAgents?: boolean;
+  plannerWorkerLoops?: number;
+  roundRobinLoops?: number;
+  roundRobinPresetAgents?: boolean;
+  councilPresetAgents?: boolean;
+  groupchatLoops?: number;
+  groupchatSpeakerStrategy?: GroupchatSpeakerStrategy;
+  groupchatPresetAgents?: boolean;
+  heavyLoops?: number;
+  heavyPresetAgents?: boolean;
+  agentRearrangeFlow?: string;
+  agentRearrangeLoops?: number;
+  agentRearrangePresetAgents?: boolean;
+  graphWorkflowEdges?: [string, string][];
+  graphWorkflowLoops?: number;
+  graphWorkflowPresetAgents?: boolean;
+}
+
+export interface SwarmTopologyOptionMeta {
+  key:         string;
+  type:        'number' | 'boolean';
+  default:     number | boolean;
+  min?:        number;
+  max?:        number;
+  description: string;
+}
+
+export interface SwarmTopologyMetadata {
+  topology:        SwarmTopology;
+  name:            string;
+  description:     string;
+  diagram:         string;
+  roleConventions: string[];
+  options:         SwarmTopologyOptionMeta[];
+  sampleConfig:    SwarmConfig;
 }
 
 export interface SwarmConfig {

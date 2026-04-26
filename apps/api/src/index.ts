@@ -31,6 +31,7 @@ import { fsRouter } from './routes/fs.js';
 import { swarmRunsRouter } from './routes/swarm-runs.js';
 import { swarmArchitectRouter } from './routes/swarm-architect.js';
 import { swarmTemplatesRouter } from './routes/swarm-templates.js';
+import { swarmTopologyRouter } from './routes/swarm-topology.js';
 import { startScheduler } from './services/scheduler.js';
 import { startRecurrenceScheduler } from './services/recurrence-generator.js';
 import { startQueueRunner } from './services/queue-runner.js';
@@ -71,6 +72,7 @@ app.use('/api/fs', fsRouter);
 app.use('/api/swarm', swarmRunsRouter);
 app.use('/api/swarm', swarmArchitectRouter);
 app.use('/api/swarm/templates', swarmTemplatesRouter);
+app.use('/api/swarm', swarmTopologyRouter);
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof ZodError) {

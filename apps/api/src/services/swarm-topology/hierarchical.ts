@@ -36,6 +36,7 @@
 import type { SwarmConfig, CoordinatorConfig } from '../../swarm-schemas.js';
 import {
   spawnCoordinator,
+  runCoordinatorsInParallel,
   emitTopologyEvent,
   type RunContext,
 } from '../swarm-runtime.js';
@@ -378,8 +379,8 @@ export const hierarchicalHandler: TopologyHandler = {
       const assignedWorkers = workerCoords.filter(w => ordersByWorker.has(w.id));
       const peerOutputsSnapshot = ''; // parallel workers don't see each other in this loop
 
-      await Promise.allSettled(
-        assignedWorkers.map(worker => spawnCoordinator(worker, ctx, {
+      await runCoordinatorsInParallel(
+        assignedWorkers.map(worker => () => spawnCoordinator(worker, ctx, {
           loop:           String(loop),
           max_loops:      String(maxLoops),
           assignment:     readKey(ctx, `hierarchical:assignment:${worker.id}`),

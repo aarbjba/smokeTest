@@ -27,6 +27,7 @@
 import type { SwarmConfig, CoordinatorConfig } from '../../swarm-schemas.js';
 import {
   spawnCoordinator,
+  runCoordinatorsInParallel,
   emitTopologyEvent,
   type RunContext,
 } from '../swarm-runtime.js';
@@ -173,8 +174,8 @@ export const mixtureOfAgentsHandler: TopologyHandler = {
       // see the same input (matches Python `step(task=full_context)` semantics).
       const conversationSnapshot = readKey(ctx, 'moa:conversation');
 
-      await Promise.allSettled(
-        roles.experts.map(expert => spawnCoordinator(expert, ctx, {
+      await runCoordinatorsInParallel(
+        roles.experts.map(expert => () => spawnCoordinator(expert, ctx, {
           layer:               String(layer),
           total_layers:        String(layers),
           conversation_so_far: conversationSnapshot,

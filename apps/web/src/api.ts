@@ -421,6 +421,10 @@ export const api = {
       runInlineUrl: () => `/api/swarm/run`,
       replayUrl: (id: string, speed = 1) => `/api/swarm/runs/${id}/replay?speed=${speed}`,
     },
+    topology: {
+      list: () => request<{ topologies: import('./types').SwarmTopologyMetadata[] }>('/swarm/topology'),
+      get:  (topology: string) => request<import('./types').SwarmTopologyMetadata>(`/swarm/topology/${topology}`),
+    },
     templates: {
       coordinators: {
         list:   () => request<{ templates: CoordinatorTemplate[] }>('/swarm/templates/coordinators'),

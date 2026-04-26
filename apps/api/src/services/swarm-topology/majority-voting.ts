@@ -34,6 +34,7 @@
 import type { SwarmConfig, CoordinatorConfig } from '../../swarm-schemas.js';
 import {
   spawnCoordinator,
+  runCoordinatorsInParallel,
   emitTopologyEvent,
   type RunContext,
 } from '../swarm-runtime.js';
@@ -192,8 +193,8 @@ export const majorityVotingHandler: TopologyHandler = {
       // the same input (matches Python `task=self.conversation.get_str()`).
       const conversationSnapshot = readKey(ctx, 'majority:conversation');
 
-      await Promise.allSettled(
-        roles.experts.map(expert => spawnCoordinator(expert, ctx, {
+      await runCoordinatorsInParallel(
+        roles.experts.map(expert => () => spawnCoordinator(expert, ctx, {
           loop:                String(loop),
           total_loops:         String(loops),
           is_final_loop:       isFinalLoop ? 'true' : 'false',

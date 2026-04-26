@@ -38,8 +38,10 @@ const fail = (l) => log(c.red   + '✗ ' + c.reset + l);
 
 // ─── API helpers ─────────────────────────────────────────────────────────────
 
+const REQUEST_TIMEOUT_MS = 10_000;
+
 async function getJson(path) {
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await fetch(`${API_BASE}${path}`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`GET ${path} → ${res.status}`);
   return res.json();
 }
@@ -49,6 +51,7 @@ async function postJson(path, body) {
     method:  'POST',
     headers: { 'content-type': 'application/json' },
     body:    JSON.stringify(body),
+    signal:  AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const text = await res.text();
   try { return { ok: res.ok, status: res.status, body: JSON.parse(text) }; }

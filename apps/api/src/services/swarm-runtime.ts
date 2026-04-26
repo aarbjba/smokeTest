@@ -53,6 +53,31 @@ export function emitTopologyEvent(
   emitAndStore(ctx, 'swarm', type, data);
 }
 
+/**
+ * Launch N coordinator spawns in parallel, but stagger their startup by
+ * SPAWN_STAGGER_MS so Windows' shell:true cmd.exe wrapper has time to wire
+ * up each child's stdin pipe before the next one starts.
+ *
+ * Without staggering, simultaneous spawns race the stdin pipe wiring and
+ * Claude reads zero bytes on stdin (EOF arrived first), exiting with code 1
+ * and turnCount 0. The stagger is invisible to throughput because real work
+ * takes 30-60s per coordinator.
+ *
+ * Use whenever a topology handler wants concurrent coordinator execution.
+ */
+const SPAWN_STAGGER_MS = 150;
+
+export async function runCoordinatorsInParallel(
+  thunks: Array<() => Promise<void>>,
+): Promise<PromiseSettledResult<void>[]> {
+  const promises: Promise<void>[] = [];
+  for (let i = 0; i < thunks.length; i++) {
+    if (i > 0) await new Promise(r => setTimeout(r, SPAWN_STAGGER_MS));
+    promises.push(thunks[i]!());
+  }
+  return Promise.allSettled(promises);
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function nextSeq(ctx: RunContext, agentId: string): number {
