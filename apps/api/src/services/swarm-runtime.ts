@@ -7,6 +7,7 @@ import { buildSwarmMcpConfigFile, cleanupMcpConfigFile } from './swarm-mcp-confi
 import { treeKill } from './claude-sessions.js';
 import type { SwarmConfig, CoordinatorConfig, ModelTier } from '../swarm-schemas.js';
 import { MODEL_IDS } from '../swarm-schemas.js';
+import { getTopologyHandler } from './swarm-topology/index.js';
 
 const CLAUDE_CMD  = process.env.CLAUDE_CLI ?? 'claude';
 const IS_WINDOWS  = process.platform === 'win32';
@@ -18,7 +19,8 @@ export type SwarmEventType =
   | 'coordinator:start' | 'coordinator:text' | 'coordinator:tool_call'
   | 'coordinator:tool_result' | 'coordinator:terminate' | 'coordinator:error' | 'coordinator:end'
   | 'subagent:spawn' | 'subagent:complete'
-  | 'blackboard:write' | 'bus:message' | 'progress' | 'tokens' | 'error';
+  | 'blackboard:write' | 'bus:message' | 'progress' | 'tokens' | 'error'
+  | 'topology:phase_change';
 
 export interface SwarmEvent {
   type: SwarmEventType;
@@ -27,7 +29,7 @@ export interface SwarmEvent {
 
 export type EmitFn = (event: SwarmEvent) => void;
 
-interface RunContext {
+export interface RunContext {
   runId:            string;
   runDb:            Database.Database;
   config:           SwarmConfig;
@@ -37,6 +39,18 @@ interface RunContext {
   seqCounters:      Map<string, number>;
   pendingToolUse:   Map<string, string>;   // toolUseId → toolName
   turnCounters:     Map<string, number>;
+}
+
+/**
+ * Emit a structured event AND persist it to the run-DB events table.
+ * Topology handlers use this to record phase changes without touching the DB directly.
+ */
+export function emitTopologyEvent(
+  ctx: RunContext,
+  type: SwarmEventType,
+  data: Record<string, unknown>,
+): void {
+  emitAndStore(ctx, 'swarm', type, data);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -57,20 +71,30 @@ function emitAndStore(ctx: RunContext, agentId: string, type: SwarmEventType, da
   ctx.emitEvent({ type, data });
 }
 
-function renderCoordinatorPrompt(coordConfig: CoordinatorConfig, ctx: RunContext): string {
+function renderCoordinatorPrompt(
+  coordConfig: CoordinatorConfig,
+  ctx: RunContext,
+  extraVars: Record<string, string> = {},
+): string {
   const peerIds = ctx.config.coordinators
     .filter(c => c.id !== coordConfig.id)
     .map(c => c.id)
     .join(', ');
   const subagentNames = coordConfig.subagents.map(s => s.name).join(', ');
 
-  return coordConfig.systemPromptTemplate
+  let rendered = coordConfig.systemPromptTemplate
     .replace(/\{\{goal\}\}/g,           ctx.config.goal)
     .replace(/\{\{id\}\}/g,             coordConfig.id)
     .replace(/\{\{role\}\}/g,           coordConfig.role)
     .replace(/\{\{peer_ids\}\}/g,       peerIds || '(none)')
     .replace(/\{\{subagent_names\}\}/g, subagentNames || '(none)')
     .replace(/\{\{run_id\}\}/g,         ctx.runId);
+
+  for (const [key, value] of Object.entries(extraVars)) {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    rendered = rendered.replace(new RegExp(`\\{\\{${escaped}\\}\\}`, 'g'), value);
+  }
+  return rendered;
 }
 
 // ─── Stream-JSON Parser ───────────────────────────────────────────────────────
@@ -218,7 +242,18 @@ function handleCoordinatorLine(agentId: string, raw: string, ctx: RunContext): v
 
 // ─── Coordinator Spawn ───────────────────────────────────────────────────────
 
-async function spawnCoordinator(coordConfig: CoordinatorConfig, ctx: RunContext): Promise<void> {
+/**
+ * Spawn one coordinator subprocess. Resolves when the child exits or errors.
+ *
+ * `extraVars` adds template-variable substitutions on top of the built-in ones
+ * (`{{goal}}`, `{{role}}`, etc.). Topology handlers use this to inject
+ * round-specific or phase-specific context.
+ */
+export async function spawnCoordinator(
+  coordConfig: CoordinatorConfig,
+  ctx: RunContext,
+  extraVars: Record<string, string> = {},
+): Promise<void> {
   const agentId    = coordConfig.id;
   const modelId    = MODEL_IDS[coordConfig.model as ModelTier] ?? MODEL_IDS.sonnet;
   const allAgentIds = ctx.config.coordinators.map(c => c.id);
@@ -234,7 +269,7 @@ async function spawnCoordinator(coordConfig: CoordinatorConfig, ctx: RunContext)
   // Build MCP config for this coordinator
   const mcpConfigPath = buildSwarmMcpConfigFile(ctx.runId, agentId, allAgentIds, dbPath);
 
-  const systemPrompt = renderCoordinatorPrompt(coordConfig, ctx);
+  const systemPrompt = renderCoordinatorPrompt(coordConfig, ctx, extraVars);
 
   const args = [
     '-p',
@@ -356,8 +391,19 @@ export async function runSwarm(
   emitAndStore(ctx, 'swarm', 'swarm:start', {
     runId,
     goal:             config.goal,
+    topology:         config.topology,
     coordinatorCount: config.coordinators.length,
   });
+
+  // Topology dispatch — handler decides scheduling (parallel, sequential, rounds, …).
+  const handler = getTopologyHandler(config.topology);
+  const validation = handler.validate(config);
+  if (!validation.valid) {
+    emitAndStore(ctx, 'swarm', 'error', {
+      message: `Invalid config for topology "${config.topology}": ${validation.errors.join('; ')}`,
+    });
+    abort.abort();
+  }
 
   // Timeout
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
@@ -366,9 +412,9 @@ export async function runSwarm(
   }
 
   try {
-    await Promise.allSettled(
-      config.coordinators.map(c => spawnCoordinator(c, ctx))
-    );
+    if (validation.valid) {
+      await handler.run(ctx);
+    }
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
   }

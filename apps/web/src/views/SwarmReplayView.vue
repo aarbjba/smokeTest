@@ -98,7 +98,8 @@ function startReplay() {
     'swarm:start', 'swarm:end', 'coordinator:start', 'coordinator:text',
     'coordinator:tool_call', 'coordinator:tool_result', 'coordinator:terminate',
     'coordinator:error', 'coordinator:end', 'subagent:spawn', 'subagent:complete',
-    'blackboard:write', 'bus:message', 'progress', 'tokens', 'error', 'replay_end',
+    'blackboard:write', 'bus:message', 'progress', 'tokens', 'error',
+    'topology:phase_change', 'replay_end',
   ];
 
   for (const n of eventNames) {

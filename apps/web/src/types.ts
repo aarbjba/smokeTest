@@ -321,9 +321,18 @@ export interface CoordinatorConfig {
   firstPrompt?: string;
 }
 
+export type SwarmTopology = 'concurrent' | 'debate';
+
+export interface SwarmTopologyOptions {
+  debateRounds?: number;
+  debatePresetAgents?: boolean;
+}
+
 export interface SwarmConfig {
   goal: string;
   coordinators: CoordinatorConfig[];
+  topology?: SwarmTopology;
+  topologyOptions?: SwarmTopologyOptions;
   globalTokenLimit?: number;
   timeoutMs?: number;
 }

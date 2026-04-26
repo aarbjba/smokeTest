@@ -41,9 +41,25 @@ export const CoordinatorConfigSchema = z.object({
 });
 export type CoordinatorConfig = z.infer<typeof CoordinatorConfigSchema>;
 
+export const SwarmTopology = z.enum(['concurrent', 'debate']);
+export type SwarmTopology = z.infer<typeof SwarmTopology>;
+
+/**
+ * Per-topology tuning. Each handler reads only the keys it cares about.
+ * Adding a new topology means adding fields here, not changing this type's shape.
+ */
+export const TopologyOptionsSchema = z.object({
+  debateRounds:        z.number().int().min(1).max(10).default(3),
+  /** When true, debate handler uses built-in Pro/Con/Judge prompts and ignores coordinators[*].systemPromptTemplate. */
+  debatePresetAgents:  z.boolean().default(false),
+}).partial().default({});
+export type TopologyOptions = z.infer<typeof TopologyOptionsSchema>;
+
 export const SwarmConfigSchema = z.object({
   goal:               z.string().min(5),
   coordinators:       z.array(CoordinatorConfigSchema).min(1).max(10),
+  topology:           SwarmTopology.default('concurrent'),
+  topologyOptions:    TopologyOptionsSchema,
   globalTokenLimit:   z.number().int().positive().default(5_000_000),
   timeoutMs:          z.number().int().positive().default(8 * 60_000),
 });
