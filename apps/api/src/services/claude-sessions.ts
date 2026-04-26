@@ -321,14 +321,24 @@ const ARCHITECT_PREPROMPT = `Du bist Swarm-Architect. Dein Job: in wenigen Nachr
   - \`subagents\`: Array (kann leer sein), jeder Subagent hat: name, prompt, model, tools
 - \`globalTokenLimit\`: default 5_000_000
 - \`timeoutMs\`: default 480_000 (8 Minuten)
-- \`topology\`: "concurrent" (default) | "debate-with-judge"
-- \`topologyOptions\`: {} oder { "debateRounds": 1–10, "debatePresetAgents": false } — nur für topology="debate-with-judge" relevant
-  - \`debatePresetAgents=true\` → Pro/Con/Judge benutzen eingebaute, gut getunte System-Prompts (kyegomez-Original portiert). Du musst trotzdem 3 Coordinators mit Roles "pro"/"con"/"judge" angeben (id, model, toolPermissions), aber systemPromptTemplate darf irgendein gültiger String sein — er wird vom Handler überschrieben.
+- \`topology\`: "concurrent" (default) | "debate-with-judge" | "mixture-of-agents"
+- \`topologyOptions\`: {} oder topologie-spezifische Felder:
+  - debate-with-judge: \`debateRounds\` (1–10, default 3), \`debatePresetAgents\` (boolean, default false → bei true werden eingebaute Pro/Con/Judge System-Prompts benutzt; trotzdem 3 Coordinators mit Roles "pro"/"con"/"judge" angeben)
+  - mixture-of-agents: \`moaLayers\` (1–10, default 3 — Anzahl Experten-Runden vor Aggregation), \`moaPresetAggregator\` (boolean, default false → bei true wird der eingebaute kyegomez-Aggregator-Prompt benutzt)
 
 ## Topology-Auswahl (welche Schwarm-Architektur?)
 
 ### topology: "concurrent" (default)
 Alle Coordinators laufen GLEICHZEITIG, kein Aggregator. Geeignet für: parallele Recherche, Hub-and-Spoke, jeden Workflow ohne harte Reihenfolge zwischen Coordinators. Das ist der Standardfall.
+
+### topology: "mixture-of-agents"
+N Experten-Coordinators arbeiten in L Layers parallel an derselben Aufgabe; jedes Layer sieht die Outputs aller vorherigen Layers. Am Ende synthesisiert ein Aggregator-Coordinator das Gesamtergebnis. STRIKTE Anforderungen:
+- Mindestens 2 Coordinators (≥1 Experte + genau 1 Aggregator)
+- Genau ein Coordinator MUSS "aggregator" im role-Feld haben — alle anderen sind Experten
+- Experten bekommen Template-Vars: \`{{layer}}\`, \`{{total_layers}}\`, \`{{conversation_so_far}}\`, \`{{expert_output_key}}\`
+- Experten MÜSSEN ihren Beitrag auf den Blackboard-Key \`{{expert_output_key}}\` schreiben (NICHT auf einen geteilten Key — der Handler aggregiert selber)
+- Aggregator bekommt: \`{{conversation_so_far}}\` (volle History), schreibt finale Synthese auf \`moa:final\`
+- Default: 3 Layers. Geeignet für: tiefe Recherchen, Konsens-Bildung mehrerer Perspektiven, Risikoanalysen.
 
 ### topology: "debate-with-judge"
 Drei Coordinators argumentieren in N Runden: Pro → Con → Judge. STRIKTE Anforderungen:

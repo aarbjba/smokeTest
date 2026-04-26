@@ -41,7 +41,7 @@ export const CoordinatorConfigSchema = z.object({
 });
 export type CoordinatorConfig = z.infer<typeof CoordinatorConfigSchema>;
 
-export const SwarmTopology = z.enum(['concurrent', 'debate-with-judge']);
+export const SwarmTopology = z.enum(['concurrent', 'debate-with-judge', 'mixture-of-agents']);
 export type SwarmTopology = z.infer<typeof SwarmTopology>;
 
 /**
@@ -49,9 +49,15 @@ export type SwarmTopology = z.infer<typeof SwarmTopology>;
  * Adding a new topology means adding fields here, not changing this type's shape.
  */
 export const TopologyOptionsSchema = z.object({
-  debateRounds:        z.number().int().min(1).max(10).default(3),
+  // debate-with-judge
+  debateRounds:           z.number().int().min(1).max(10).default(3),
   /** When true, debate handler uses built-in Pro/Con/Judge prompts and ignores coordinators[*].systemPromptTemplate. */
-  debatePresetAgents:  z.boolean().default(false),
+  debatePresetAgents:     z.boolean().default(false),
+
+  // mixture-of-agents
+  moaLayers:              z.number().int().min(1).max(10).default(3),
+  /** When true, the aggregator coordinator's systemPromptTemplate is replaced by the kyegomez AGGREGATOR_SYSTEM_PROMPT_MAIN. */
+  moaPresetAggregator:    z.boolean().default(false),
 }).partial().default({});
 export type TopologyOptions = z.infer<typeof TopologyOptionsSchema>;
 

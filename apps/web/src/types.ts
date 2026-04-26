@@ -321,11 +321,13 @@ export interface CoordinatorConfig {
   firstPrompt?: string;
 }
 
-export type SwarmTopology = 'concurrent' | 'debate-with-judge';
+export type SwarmTopology = 'concurrent' | 'debate-with-judge' | 'mixture-of-agents';
 
 export interface SwarmTopologyOptions {
   debateRounds?: number;
   debatePresetAgents?: boolean;
+  moaLayers?: number;
+  moaPresetAggregator?: boolean;
 }
 
 export interface SwarmConfig {
