@@ -4,8 +4,9 @@ import { basename } from 'node:path';
 import { db as mainDb } from '../db.js';
 import { openRunDb, runDbPath } from '../services/swarm-db.js';
 import { runSwarm, type SwarmEvent } from '../services/swarm-runtime.js';
+import { getTopologyHandler } from '../services/swarm-topology/index.js';
 import { SwarmConfigSchema } from '../swarm-schemas.js';
-import { z } from 'zod';
+import { z, ZodError } from 'zod';
 
 export const swarmRunsRouter = Router();
 
@@ -54,6 +55,89 @@ swarmRunsRouter.post('/run', (req, res) => {
       write('error', { message: String(err) });
       clearInterval(heartbeat);
       res.end();
+    });
+});
+
+// ─── POST /validate — dry-run config validation, no DB write ─────────────────
+//
+// Two-stage check: (1) Zod schema (shape + defaults), (2) topology-handler
+// validate() (role assignments, agent counts, flow-DSL, DAG cycles, etc.).
+// The architect MCP `validate_config` tool wraps this so the agent can iterate
+// on a draft without persisting half-baked configs.
+
+swarmRunsRouter.post('/validate', (req, res) => {
+  const raw = req.body?.config ?? req.body;
+  const parsed = SwarmConfigSchema.safeParse(raw);
+  if (!parsed.success) {
+    res.json({
+      ok:     false,
+      stage:  'schema',
+      errors: parsed.error.issues.map(i => ({
+        path:    i.path.join('.'),
+        message: i.message,
+        code:    i.code,
+      })),
+    });
+    return;
+  }
+  const handler = getTopologyHandler(parsed.data.topology);
+  const result  = handler.validate(parsed.data);
+  if (!result.valid) {
+    res.json({ ok: false, stage: 'topology', topology: parsed.data.topology, errors: result.errors });
+    return;
+  }
+  res.json({ ok: true, topology: parsed.data.topology, normalized: parsed.data });
+});
+
+// ─── POST /run-async — fire-and-forget run, returns runId immediately ────────
+//
+// The blocking SSE /run is great for live UIs but unusable from MCP tools that
+// need a single quick result. This variant resolves on the first `swarm:start`
+// event (which is emitted *after* the run-DB row is inserted) and lets the run
+// continue in the background. Progress is observable via /runs/:id and
+// /runs/:id/replay; errors after start are recorded in swarm_runs.error_message.
+
+swarmRunsRouter.post('/run-async', (req, res) => {
+  let config;
+  try {
+    config = SwarmConfigSchema.parse(req.body?.config ?? req.body);
+  } catch (err) {
+    if (err instanceof ZodError) {
+      res.status(400).json({ error: 'Invalid SwarmConfig', issues: err.issues });
+      return;
+    }
+    res.status(400).json({ error: 'Invalid SwarmConfig', detail: String(err) });
+    return;
+  }
+
+  let resolved = false;
+  const promise = new Promise<string>((resolve, reject) => {
+    runSwarm(config, (event: SwarmEvent) => {
+      if (resolved) return;
+      if (event.type === 'swarm:start' && typeof event.data.runId === 'string') {
+        resolved = true;
+        resolve(event.data.runId);
+      }
+    }).catch((err) => {
+      if (!resolved) { resolved = true; reject(err); }
+      // else: post-start failure is already persisted to swarm_runs row.
+    });
+  });
+
+  promise
+    .then((runId) => {
+      res.status(202).json({
+        runId,
+        status: 'running',
+        urls: {
+          metadata:   `/api/swarm/runs/${runId}`,
+          replay:     `/api/swarm/runs/${runId}/replay`,
+          blackboard: `/api/swarm/runs/${runId}/blackboard`,
+        },
+      });
+    })
+    .catch((err) => {
+      res.status(500).json({ error: 'Failed to start swarm', detail: String(err) });
     });
 });
 

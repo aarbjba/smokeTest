@@ -165,6 +165,192 @@ server.tool(
   },
 );
 
+// ─── list_topologies ─────────────────────────────────────────────────────────
+//
+// Pulls the live TOPOLOGY_METADATA single-source-of-truth (name, description,
+// role conventions, options, sample config). Lets the agent discover all
+// available topologies dynamically rather than relying on a stale list in the
+// preprompt — and lets it copy a sample config as a starting point.
+server.tool(
+  'list_topologies',
+  'List all available swarm topologies with their constraints, options and a runnable sample config. Call this when designing a new swarm and you are unsure which topology fits — or to copy a sample config as a starting point.',
+  {
+    detail: z.enum(['summary', 'full']).default('summary')
+      .describe('"summary" returns name + description + role conventions; "full" includes ASCII diagram, options schema and a complete sampleConfig.'),
+  },
+  async ({ detail }) => {
+    try {
+      const result = await apiCall<{ topologies: Array<Record<string, unknown>> }>('/api/swarm/topology');
+      const topologies = result.topologies.map((t) => {
+        if (detail === 'full') return t;
+        return {
+          topology:        t['topology'],
+          name:            t['name'],
+          description:     t['description'],
+          roleConventions: t['roleConventions'],
+          options:         (t['options'] as Array<Record<string, unknown>>).map(o => ({
+            key:         o['key'],
+            type:        o['type'],
+            default:     o['default'],
+            description: o['description'],
+          })),
+        };
+      });
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ ok: true, count: topologies.length, topologies }),
+        }],
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ ok: false, error: message }) }],
+      };
+    }
+  },
+);
+
+// ─── validate_config ─────────────────────────────────────────────────────────
+//
+// Dry-run validation with no persistence. Two-stage check on the server:
+// Zod schema (shape, defaults, regex) → topology-handler validate() (role
+// assignments, agent counts, DAG cycles, flow-DSL, ...). Returns the normalized
+// config on success so the agent can immediately pass it to run_swarm.
+server.tool(
+  'validate_config',
+  'Validate a SwarmConfig WITHOUT saving or running it. Returns ok:true with the normalized (defaults applied) config, or ok:false with structured errors. Call before run_swarm to surface problems early.',
+  {
+    config: z.record(z.unknown()).describe('SwarmConfig object to validate'),
+  },
+  async ({ config }) => {
+    try {
+      const result = await apiCall<Record<string, unknown>>('/api/swarm/validate', {
+        method: 'POST',
+        body:   JSON.stringify({ config }),
+      });
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ ok: false, error: message }) }],
+      };
+    }
+  },
+);
+
+// ─── run_swarm ───────────────────────────────────────────────────────────────
+//
+// Non-blocking start. Returns runId after the swarm:start event fires; the run
+// continues in the background. Pair with get_run_status to poll progress and
+// surface results to the user. Use validate_config first when in doubt.
+server.tool(
+  'run_swarm',
+  'Start a swarm run from a SwarmConfig (non-blocking). Returns runId immediately; the run continues in the background. Use get_run_status to poll progress and fetch the final blackboard / token totals.',
+  {
+    config: z.record(z.unknown()).describe('Validated SwarmConfig object to run'),
+    save:   z.boolean().default(false).describe('Also persist the config to swarm_configs (so it appears in the saved-configs list and can be re-run).'),
+    name:   z.string().optional().describe('Name to use when save=true'),
+  },
+  async ({ config, save, name }) => {
+    try {
+      let savedConfigId: number | null = null;
+      if (save) {
+        const saved = await apiCall<{ id: number }>('/api/swarm/configs', {
+          method: 'POST',
+          body:   JSON.stringify({ name: name ?? CONFIG_NAME ?? '', config }),
+        });
+        savedConfigId = saved.id;
+      }
+      const result = await apiCall<{ runId: string; status: string; urls: Record<string, string> }>(
+        '/api/swarm/run-async',
+        { method: 'POST', body: JSON.stringify({ config }) },
+      );
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            ok:       true,
+            run_id:   result.runId,
+            status:   result.status,
+            saved_config_id: savedConfigId,
+            urls:     result.urls,
+          }),
+        }],
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ ok: false, error: message }) }],
+      };
+    }
+  },
+);
+
+// ─── get_run_status ──────────────────────────────────────────────────────────
+//
+// Poll a swarm's progress. Returns status (running/done/error/aborted), token
+// totals, per-agent status, blackboard key count, and (optionally) the current
+// blackboard snapshot so the agent can summarize results without a separate call.
+server.tool(
+  'get_run_status',
+  'Fetch the current status, token usage, agent states, and (optionally) blackboard snapshot of a swarm run. Use after run_swarm to monitor progress and to summarize results to the user.',
+  {
+    run_id:                z.string().min(1).describe('runId returned by run_swarm'),
+    include_blackboard:    z.boolean().default(false).describe('Also fetch the current blackboard snapshot (entries[]).'),
+    blackboard_key_prefix: z.string().optional().describe('Filter blackboard entries by key prefix (e.g. "moa:" or "debate:"). Ignored when include_blackboard=false.'),
+  },
+  async ({ run_id, include_blackboard, blackboard_key_prefix }) => {
+    try {
+      interface RunMeta {
+        run: {
+          id: string; goal: string; status: string;
+          coordinator_count: number; total_tokens: number | null;
+          started_at: number; ended_at: number | null;
+          error_message: string | null;
+        };
+        agents: Array<Record<string, unknown>>;
+        tokenSummary: Array<Record<string, unknown>>;
+        eventCount: number;
+        blackboardKeyCount: number;
+      }
+      const meta = await apiCall<RunMeta>(`/api/swarm/runs/${encodeURIComponent(run_id)}`);
+      const summary: Record<string, unknown> = {
+        ok:         true,
+        run_id,
+        status:     meta.run.status,
+        goal:       meta.run.goal,
+        coordinators: meta.agents.map(a => ({
+          id:        a['id'],
+          status:    a['status'],
+          exit_code: a['exit_code'],
+        })),
+        total_tokens:        meta.run.total_tokens,
+        event_count:         meta.eventCount,
+        blackboard_key_count: meta.blackboardKeyCount,
+        error_message:       meta.run.error_message,
+      };
+      if (include_blackboard) {
+        const qs = blackboard_key_prefix ? `?prefix=${encodeURIComponent(blackboard_key_prefix)}` : '';
+        const bb = await apiCall<{ entries: Array<{ key: string; value: string; written_by: string }> }>(
+          `/api/swarm/runs/${encodeURIComponent(run_id)}/blackboard${qs}`,
+        );
+        summary['blackboard'] = bb.entries;
+      }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(summary) }],
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ ok: false, error: message }) }],
+      };
+    }
+  },
+);
+
 // ─── Start ───────────────────────────────────────────────────────────────────
 const transport = new StdioServerTransport();
 await server.connect(transport);
