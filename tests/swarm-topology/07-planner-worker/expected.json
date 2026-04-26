@@ -1,0 +1,6 @@
+{
+  "description": "Single cycle: planner publishes tasks → workers claim/complete → judge writes verdict.",
+  "status": "done",
+  "blackboardKeys": ["planner_worker:verdict"],
+  "phases": ["planning", "execution", "judgement"]
+}

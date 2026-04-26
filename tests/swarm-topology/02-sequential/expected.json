@@ -1,0 +1,11 @@
+{
+  "description": "Linear pipeline writer → editor → polish; one stage event per coordinator.",
+  "status": "done",
+  "blackboardKeys": [
+    "sequential:loop_1:stage_1:writer",
+    "sequential:loop_1:stage_2:editor",
+    "sequential:loop_1:stage_3:polish"
+  ],
+  "phases": ["stage"],
+  "phaseCounts": { "stage": 3 }
+}

@@ -1,0 +1,6 @@
+{
+  "description": "Director → workers parallel → director eval, up to 2 loops (may early-exit).",
+  "status": "done",
+  "blackboardKeys": ["hierarchical:assignments", "hierarchical:director_verdict"],
+  "phases": ["director", "workers", "evaluation"]
+}

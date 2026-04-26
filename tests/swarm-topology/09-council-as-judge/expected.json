@@ -1,0 +1,12 @@
+{
+  "description": "4 dimension judges in parallel + 1 aggregator; each judge writes its own rationale.",
+  "status": "done",
+  "blackboardKeys": [
+    "council:final_report",
+    "council:judgment:judge-accuracy",
+    "council:judgment:judge-helpfulness",
+    "council:judgment:judge-coherence",
+    "council:judgment:judge-instruction"
+  ],
+  "phases": ["judging", "aggregation"]
+}

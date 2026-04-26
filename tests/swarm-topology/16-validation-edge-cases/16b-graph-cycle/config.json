@@ -1,0 +1,37 @@
+{
+  "goal": "Test that graph-workflow rejects DAGs containing cycles (a -> b -> a).",
+  "topology": "graph-workflow",
+  "coordinators": [
+    {
+      "id": "alpha",
+      "role": "Node A",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. You are {{id}}. Contribute, then terminate."
+    },
+    {
+      "id": "beta",
+      "role": "Node B",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. You are {{id}}. Contribute, then terminate."
+    },
+    {
+      "id": "gamma",
+      "role": "Node C",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. You are {{id}}. Contribute, then terminate."
+    }
+  ],
+  "topologyOptions": {
+    "graphWorkflowEdges": [
+      ["alpha", "beta"],
+      ["beta",  "gamma"],
+      ["gamma", "alpha"]
+    ],
+    "graphWorkflowLoops": 1
+  },
+  "timeoutMs": 60000,
+  "globalTokenLimit": 100000
+}

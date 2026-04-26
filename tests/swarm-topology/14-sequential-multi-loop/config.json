@@ -1,0 +1,30 @@
+{
+  "goal": "Schreibe einen 2-Satz Tweet zu 'Warum Vector-Datenbanken in 2026 Mainstream werden'. Pipeline: writer → editor → polish, ZWEIMAL durchlaufen für iterative Verfeinerung.",
+  "topology": "sequential",
+  "coordinators": [
+    {
+      "id": "writer",
+      "role": "Writer",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Loop {{loop}}/{{total_loops}}, Stage {{stage}}/{{total_stages}}. Previous: {{previous_output}}. Write your output to blackboard '{{stage_output_key}}', then terminate. On loop>1 incorporate prior loop's polish output."
+    },
+    {
+      "id": "editor",
+      "role": "Editor",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Loop {{loop}}/{{total_loops}}, Stage {{stage}}/{{total_stages}}. Previous: {{previous_output}}. Edit and write to blackboard '{{stage_output_key}}', terminate."
+    },
+    {
+      "id": "polish",
+      "role": "Polish",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Loop {{loop}}/{{total_loops}}, Stage {{stage}}/{{total_stages}}. Previous: {{previous_output}}. Polish to publication-ready and write to blackboard '{{stage_output_key}}', terminate."
+    }
+  ],
+  "topologyOptions": { "sequentialDriftDetection": false, "sequentialLoops": 2 },
+  "timeoutMs": 540000,
+  "globalTokenLimit": 5000000
+}

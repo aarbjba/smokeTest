@@ -1,0 +1,6 @@
+{
+  "description": "plannerWorkerLoops>1 without a judge coordinator must fail validation.",
+  "mode": "validate-only",
+  "shouldFail": true,
+  "errorIncludes": ["requires a judge"]
+}

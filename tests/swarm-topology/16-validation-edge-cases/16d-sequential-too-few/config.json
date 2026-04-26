@@ -1,0 +1,16 @@
+{
+  "goal": "Test that sequential rejects configurations with fewer than 2 coordinators.",
+  "topology": "sequential",
+  "coordinators": [
+    {
+      "id": "lonely",
+      "role": "Lonely",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. You are {{id}}. Contribute, then terminate."
+    }
+  ],
+  "topologyOptions": {},
+  "timeoutMs": 60000,
+  "globalTokenLimit": 100000
+}

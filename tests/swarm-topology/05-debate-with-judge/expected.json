@@ -1,0 +1,6 @@
+{
+  "description": "1 round of pro → con → judge; judge writes debate:current_topic and debate:history.",
+  "status": "done",
+  "blackboardKeys": ["debate:current_topic", "debate:history"],
+  "phases": []
+}

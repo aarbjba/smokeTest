@@ -1,0 +1,30 @@
+{
+  "goal": "Sammle drei verschiedene Perspektiven zu: TypeScript vs JavaScript für neue Projekte (jeder Coordinator schreibt seinen Take auf das Blackboard).",
+  "topology": "concurrent",
+  "coordinators": [
+    {
+      "id": "perspective-a",
+      "role": "Tech-Pragmatiker",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Your id: {{id}}. Contribute concisely as {{role}}, write one paragraph to blackboard 'view:{{id}}', then call terminate."
+    },
+    {
+      "id": "perspective-b",
+      "role": "Type-Safety-Verfechter",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Your id: {{id}}. Contribute concisely as {{role}}, write one paragraph to blackboard 'view:{{id}}', then call terminate."
+    },
+    {
+      "id": "perspective-c",
+      "role": "Velocity-Optimierer",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Your id: {{id}}. Contribute concisely as {{role}}, write one paragraph to blackboard 'view:{{id}}', then call terminate."
+    }
+  ],
+  "topologyOptions": {},
+  "timeoutMs": 300000,
+  "globalTokenLimit": 5000000
+}

@@ -1,0 +1,26 @@
+{
+  "goal": "Test that agent-rearrange rejects flow strings referencing unknown coordinator ids.",
+  "topology": "agent-rearrange",
+  "coordinators": [
+    {
+      "id": "alpha",
+      "role": "Agent A",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. You are {{id}}. Contribute, then terminate."
+    },
+    {
+      "id": "beta",
+      "role": "Agent B",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. You are {{id}}. Contribute, then terminate."
+    }
+  ],
+  "topologyOptions": {
+    "agentRearrangeFlow": "alpha -> beta, gamma",
+    "agentRearrangeLoops": 1
+  },
+  "timeoutMs": 60000,
+  "globalTokenLimit": 100000
+}

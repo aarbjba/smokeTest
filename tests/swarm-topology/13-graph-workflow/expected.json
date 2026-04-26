@@ -1,0 +1,7 @@
+{
+  "description": "DAG: 3 layers (researcher+analyst → synth → editor+reviewer); Kahn computes 3 layers, layer phase fires 3×.",
+  "status": "done",
+  "blackboardKeys": ["graph:final"],
+  "phases": ["layer"],
+  "phaseCounts": { "layer": 3 }
+}

@@ -1,0 +1,30 @@
+{
+  "goal": "Plane einen 30-Sekunden-Trailer für ein Tech-Buch über Multi-Agent-Systems. Liefere am Ende den fertigen Trailer-Text.",
+  "topology": "hierarchical",
+  "coordinators": [
+    {
+      "id": "director",
+      "role": "Director",
+      "model": "haiku",
+      "maxTurns": 8,
+      "systemPromptTemplate": "Director role overridden by preset when hierarchicalPresetAgents=true."
+    },
+    {
+      "id": "worker-research",
+      "role": "Research-Worker",
+      "model": "haiku",
+      "maxTurns": 6,
+      "systemPromptTemplate": "Worker role overridden by preset when hierarchicalPresetAgents=true."
+    },
+    {
+      "id": "worker-writer",
+      "role": "Writer-Worker",
+      "model": "haiku",
+      "maxTurns": 6,
+      "systemPromptTemplate": "Worker role overridden by preset when hierarchicalPresetAgents=true."
+    }
+  ],
+  "topologyOptions": { "maxDirectorLoops": 2, "hierarchicalPresetAgents": true },
+  "timeoutMs": 600000,
+  "globalTokenLimit": 5000000
+}

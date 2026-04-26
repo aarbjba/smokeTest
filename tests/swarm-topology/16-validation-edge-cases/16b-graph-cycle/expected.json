@@ -1,0 +1,6 @@
+{
+  "description": "DAG cycle alpha → beta → gamma → alpha must be rejected by Kahn's algorithm.",
+  "mode": "validate-only",
+  "shouldFail": true,
+  "errorIncludes": ["contains a cycle"]
+}

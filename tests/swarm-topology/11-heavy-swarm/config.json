@@ -1,0 +1,51 @@
+{
+  "goal": "Erstelle eine Entscheidungsempfehlung: Sollten wir 2026 von TypeScript auf Bun + Hono migrieren? Brauche Research, Analysis, Alternatives, Verification, dann Synthesis.",
+  "topology": "heavy-swarm",
+  "coordinators": [
+    {
+      "id": "captain",
+      "role": "Captain (Question Decomposer)",
+      "model": "haiku",
+      "maxTurns": 6,
+      "systemPromptTemplate": "Captain role overridden by preset when heavyPresetAgents=true."
+    },
+    {
+      "id": "research",
+      "role": "Research Specialist",
+      "model": "haiku",
+      "maxTurns": 6,
+      "systemPromptTemplate": "Specialist role overridden by preset when heavyPresetAgents=true."
+    },
+    {
+      "id": "analysis",
+      "role": "Analysis Specialist",
+      "model": "haiku",
+      "maxTurns": 6,
+      "systemPromptTemplate": "Specialist role overridden by preset when heavyPresetAgents=true."
+    },
+    {
+      "id": "alternatives",
+      "role": "Alternatives Specialist",
+      "model": "haiku",
+      "maxTurns": 6,
+      "systemPromptTemplate": "Specialist role overridden by preset when heavyPresetAgents=true."
+    },
+    {
+      "id": "verification",
+      "role": "Verification Specialist",
+      "model": "haiku",
+      "maxTurns": 6,
+      "systemPromptTemplate": "Specialist role overridden by preset when heavyPresetAgents=true."
+    },
+    {
+      "id": "synthesis",
+      "role": "Synthesis Agent",
+      "model": "haiku",
+      "maxTurns": 8,
+      "systemPromptTemplate": "Synthesis role overridden by preset when heavyPresetAgents=true."
+    }
+  ],
+  "topologyOptions": { "heavyLoops": 1, "heavyPresetAgents": true },
+  "timeoutMs": 720000,
+  "globalTokenLimit": 8000000
+}

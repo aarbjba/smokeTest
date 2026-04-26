@@ -1,0 +1,53 @@
+{
+  "goal": "Erstelle einen Mini-Markt-Report zu 'Vue 3.5 Adoption'. Researcher und Analyst arbeiten parallel als Eingabe; Synthesizer fasst zusammen; Editor + Reviewer prüfen parallel.",
+  "topology": "graph-workflow",
+  "coordinators": [
+    {
+      "id": "researcher",
+      "role": "Researcher",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Graph-workflow role overridden by preset when graphWorkflowPresetAgents=true."
+    },
+    {
+      "id": "analyst",
+      "role": "Analyst",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Graph-workflow role overridden by preset when graphWorkflowPresetAgents=true."
+    },
+    {
+      "id": "synth",
+      "role": "Synthesizer",
+      "model": "haiku",
+      "maxTurns": 6,
+      "systemPromptTemplate": "Graph-workflow role overridden by preset when graphWorkflowPresetAgents=true."
+    },
+    {
+      "id": "editor",
+      "role": "Editor",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Graph-workflow role overridden by preset when graphWorkflowPresetAgents=true."
+    },
+    {
+      "id": "reviewer",
+      "role": "Reviewer",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Graph-workflow role overridden by preset when graphWorkflowPresetAgents=true."
+    }
+  ],
+  "topologyOptions": {
+    "graphWorkflowEdges": [
+      ["researcher", "synth"],
+      ["analyst",    "synth"],
+      ["synth",      "editor"],
+      ["synth",      "reviewer"]
+    ],
+    "graphWorkflowLoops": 1,
+    "graphWorkflowPresetAgents": true
+  },
+  "timeoutMs": 600000,
+  "globalTokenLimit": 5000000
+}

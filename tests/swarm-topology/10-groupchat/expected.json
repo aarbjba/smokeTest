@@ -1,0 +1,7 @@
+{
+  "description": "2 loops of round-robin speaker order over 3 agents; conversation grows monotonically.",
+  "status": "done",
+  "blackboardKeys": ["groupchat:conversation"],
+  "phases": ["loop_start"],
+  "phaseCounts": { "loop_start": 2 }
+}

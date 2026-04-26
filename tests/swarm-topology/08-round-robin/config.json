@@ -1,0 +1,30 @@
+{
+  "goal": "Brainstormt iterativ Produktnamen für eine neue KI-Werkbank-App. Jede Runde baut auf vorherigen Vorschlägen auf — Kombinationen, Verfeinerungen, neue Winkel.",
+  "topology": "round-robin",
+  "coordinators": [
+    {
+      "id": "alpha",
+      "role": "Tech-Marken-Spezialist",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Round-robin agent role overridden by preset when roundRobinPresetAgents=true."
+    },
+    {
+      "id": "beta",
+      "role": "Storytelling-Profi",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Round-robin agent role overridden by preset when roundRobinPresetAgents=true."
+    },
+    {
+      "id": "gamma",
+      "role": "Linguist",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Round-robin agent role overridden by preset when roundRobinPresetAgents=true."
+    }
+  ],
+  "topologyOptions": { "roundRobinLoops": 2, "roundRobinPresetAgents": true },
+  "timeoutMs": 420000,
+  "globalTokenLimit": 5000000
+}

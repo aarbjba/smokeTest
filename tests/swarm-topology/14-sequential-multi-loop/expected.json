@@ -1,0 +1,14 @@
+{
+  "description": "FIX 1 VALIDATION: pipeline runs twice; loop 2 stage 1 sees loop 1 final output; both loops produce all 3 stage keys.",
+  "status": "done",
+  "blackboardKeys": [
+    "sequential:loop_1:stage_1:writer",
+    "sequential:loop_1:stage_2:editor",
+    "sequential:loop_1:stage_3:polish",
+    "sequential:loop_2:stage_1:writer",
+    "sequential:loop_2:stage_2:editor",
+    "sequential:loop_2:stage_3:polish"
+  ],
+  "phases": ["loop_start", "stage"],
+  "phaseCounts": { "loop_start": 2, "stage": 6 }
+}

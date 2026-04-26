@@ -1,0 +1,37 @@
+{
+  "goal": "Bewerte das Risiko einer KI-First-Strategie für ein 10-Mann-Startup aus drei Blickwinkeln (Tech, Markt, Finanzen) und synthetisiere.",
+  "topology": "mixture-of-agents",
+  "coordinators": [
+    {
+      "id": "expert-tech",
+      "role": "Tech-Risikoanalyst",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Layer {{layer}}/{{total_layers}}. Conversation: {{conversation_so_far}}. Contribute as {{role}}, write to blackboard '{{expert_output_key}}', then terminate."
+    },
+    {
+      "id": "expert-market",
+      "role": "Markt-Analyst",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Layer {{layer}}/{{total_layers}}. Conversation: {{conversation_so_far}}. Contribute as {{role}}, write to blackboard '{{expert_output_key}}', then terminate."
+    },
+    {
+      "id": "expert-finance",
+      "role": "Finanz-Analyst",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Layer {{layer}}/{{total_layers}}. Conversation: {{conversation_so_far}}. Contribute as {{role}}, write to blackboard '{{expert_output_key}}', then terminate."
+    },
+    {
+      "id": "aggregator",
+      "role": "Aggregator",
+      "model": "haiku",
+      "maxTurns": 6,
+      "systemPromptTemplate": "Aggregator role overridden by preset when moaPresetAggregator=true."
+    }
+  ],
+  "topologyOptions": { "moaLayers": 2, "moaPresetAggregator": true },
+  "timeoutMs": 420000,
+  "globalTokenLimit": 5000000
+}

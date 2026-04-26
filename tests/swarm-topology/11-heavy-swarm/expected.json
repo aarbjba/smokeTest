@@ -1,0 +1,6 @@
+{
+  "description": "Captain JSON-decomposes → 4 specialists parallel → synthesis (1 cycle).",
+  "status": "done",
+  "blackboardKeys": ["heavy:questions", "heavy:final_report"],
+  "phases": ["questions", "specialists", "synthesis"]
+}

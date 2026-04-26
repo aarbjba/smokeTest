@@ -1,0 +1,7 @@
+{
+  "description": "1 loop: 3 voters parallel + 1 consensus; majority:final populated by consensus on final loop.",
+  "status": "done",
+  "blackboardKeys": ["majority:final"],
+  "phases": ["voting", "consensus"],
+  "phaseCounts": { "voting": 1, "consensus": 1 }
+}

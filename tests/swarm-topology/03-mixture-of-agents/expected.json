@@ -1,0 +1,7 @@
+{
+  "description": "2 layers of 3 experts → 1 aggregator; 'experts' phase fires twice, 'aggregation' once.",
+  "status": "done",
+  "blackboardKeys": ["moa:final"],
+  "phases": ["experts", "aggregation"],
+  "phaseCounts": { "experts": 2, "aggregation": 1 }
+}

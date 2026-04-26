@@ -1,0 +1,30 @@
+{
+  "goal": "Sollten wir auf Microservices umsteigen? (Pro/Con/Judge debate, 1 Runde).",
+  "topology": "debate-with-judge",
+  "coordinators": [
+    {
+      "id": "pro",
+      "role": "Pro-Argumentator",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Pro role overridden by preset when debatePresetAgents=true."
+    },
+    {
+      "id": "con",
+      "role": "Con-Position",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Con role overridden by preset when debatePresetAgents=true."
+    },
+    {
+      "id": "judge",
+      "role": "Judge",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Judge role overridden by preset when debatePresetAgents=true."
+    }
+  ],
+  "topologyOptions": { "debateRounds": 1, "debatePresetAgents": true },
+  "timeoutMs": 300000,
+  "globalTokenLimit": 5000000
+}

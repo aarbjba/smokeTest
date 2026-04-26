@@ -1,0 +1,7 @@
+{
+  "description": "FIX 2 VALIDATION: up to 3 cycles of planner→workers→judge; judge writes verdict JSON; may early-break on is_complete=true. Phase counts depend on judge decision (≥1 of each, ≤3).",
+  "status": "done",
+  "blackboardKeys": ["planner_worker:verdict"],
+  "phases": ["planning", "execution", "judgement"],
+  "phaseCounts": { "planning": 1, "execution": 1, "judgement": 1 }
+}

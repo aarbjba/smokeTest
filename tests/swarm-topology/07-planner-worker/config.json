@@ -1,0 +1,37 @@
+{
+  "goal": "Plane und schreibe ein 4-Kapitel-Mini-Tutorial für 'Vue 3 Reactivity'. Plan zuerst die Kapitel, dann jeder Worker schreibt eines.",
+  "topology": "planner-worker",
+  "coordinators": [
+    {
+      "id": "planner",
+      "role": "Planner",
+      "model": "haiku",
+      "maxTurns": 8,
+      "systemPromptTemplate": "Planner role overridden by preset when plannerWorkerPresetAgents=true."
+    },
+    {
+      "id": "worker-1",
+      "role": "Worker",
+      "model": "haiku",
+      "maxTurns": 12,
+      "systemPromptTemplate": "Worker role overridden by preset when plannerWorkerPresetAgents=true."
+    },
+    {
+      "id": "worker-2",
+      "role": "Worker",
+      "model": "haiku",
+      "maxTurns": 12,
+      "systemPromptTemplate": "Worker role overridden by preset when plannerWorkerPresetAgents=true."
+    },
+    {
+      "id": "judge",
+      "role": "Judge",
+      "model": "haiku",
+      "maxTurns": 6,
+      "systemPromptTemplate": "Judge role overridden by preset when plannerWorkerPresetAgents=true."
+    }
+  ],
+  "topologyOptions": { "plannerWorkerPresetAgents": true, "plannerWorkerLoops": 1 },
+  "timeoutMs": 600000,
+  "globalTokenLimit": 5000000
+}

@@ -1,0 +1,6 @@
+{
+  "description": "All three coordinators run in parallel; each writes their own blackboard key.",
+  "status": "done",
+  "blackboardKeys": ["view:perspective-a", "view:perspective-b", "view:perspective-c"],
+  "phases": []
+}

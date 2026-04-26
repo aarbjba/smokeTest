@@ -1,0 +1,40 @@
+{
+  "goal": "Schreibe ein detailliertes 5-Punkte Whitepaper-Outline zu 'Multi-Agent-Architekturen in 2026'. Wenn der Judge sagt is_complete=false, plane einen weiteren Cycle.",
+  "topology": "planner-worker",
+  "coordinators": [
+    {
+      "id": "planner",
+      "role": "Planner",
+      "model": "haiku",
+      "maxTurns": 8,
+      "systemPromptTemplate": "Planner role overridden by preset when plannerWorkerPresetAgents=true."
+    },
+    {
+      "id": "worker-1",
+      "role": "Worker",
+      "model": "haiku",
+      "maxTurns": 12,
+      "systemPromptTemplate": "Worker role overridden by preset when plannerWorkerPresetAgents=true."
+    },
+    {
+      "id": "worker-2",
+      "role": "Worker",
+      "model": "haiku",
+      "maxTurns": 12,
+      "systemPromptTemplate": "Worker role overridden by preset when plannerWorkerPresetAgents=true."
+    },
+    {
+      "id": "judge",
+      "role": "Judge",
+      "model": "haiku",
+      "maxTurns": 6,
+      "systemPromptTemplate": "Judge role overridden by preset when plannerWorkerPresetAgents=true."
+    }
+  ],
+  "topologyOptions": {
+    "plannerWorkerPresetAgents": true,
+    "plannerWorkerLoops": 3
+  },
+  "timeoutMs": 900000,
+  "globalTokenLimit": 8000000
+}

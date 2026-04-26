@@ -1,0 +1,34 @@
+{
+  "goal": "Diskutiert kollaborativ: 'Was sind die drei wichtigsten Eigenschaften für ein 2026er KI-Werkzeug?' — baut aufeinander auf, mentioniert euch via @id für gezielte Rückfragen.",
+  "topology": "groupchat",
+  "coordinators": [
+    {
+      "id": "alpha",
+      "role": "UX-Designerin",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Groupchat agent role overridden by preset when groupchatPresetAgents=true."
+    },
+    {
+      "id": "beta",
+      "role": "ML-Engineer",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Groupchat agent role overridden by preset when groupchatPresetAgents=true."
+    },
+    {
+      "id": "gamma",
+      "role": "Produktstrategin",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Groupchat agent role overridden by preset when groupchatPresetAgents=true."
+    }
+  ],
+  "topologyOptions": {
+    "groupchatLoops": 2,
+    "groupchatSpeakerStrategy": "round-robin",
+    "groupchatPresetAgents": true
+  },
+  "timeoutMs": 420000,
+  "globalTokenLimit": 5000000
+}

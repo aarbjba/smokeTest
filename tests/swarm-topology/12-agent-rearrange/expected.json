@@ -1,0 +1,7 @@
+{
+  "description": "3 steps: research (1) → writer+reviewer parallel (2) → editor (3). Final conversation under rearrange:final.",
+  "status": "done",
+  "blackboardKeys": ["rearrange:final", "rearrange:conversation"],
+  "phases": ["step"],
+  "phaseCounts": { "step": 3 }
+}

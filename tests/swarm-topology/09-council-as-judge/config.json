@@ -1,0 +1,44 @@
+{
+  "goal": "Bewerte folgenden Vorschlag aus mehreren Qualitätsdimensionen: 'Wir migrieren das gesamte Backend von TypeScript nach Rust, um eine 10x Performance-Steigerung zu erreichen, in 6 Wochen mit 2 Devs.'",
+  "topology": "council-as-judge",
+  "coordinators": [
+    {
+      "id": "judge-accuracy",
+      "role": "Accuracy-Judge",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Judge role overridden by preset when councilPresetAgents=true."
+    },
+    {
+      "id": "judge-helpfulness",
+      "role": "Helpfulness-Judge",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Judge role overridden by preset when councilPresetAgents=true."
+    },
+    {
+      "id": "judge-coherence",
+      "role": "Coherence-Judge",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Judge role overridden by preset when councilPresetAgents=true."
+    },
+    {
+      "id": "judge-instruction",
+      "role": "Instruction-Adherence-Judge",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Judge role overridden by preset when councilPresetAgents=true."
+    },
+    {
+      "id": "aggregator",
+      "role": "Aggregator",
+      "model": "haiku",
+      "maxTurns": 6,
+      "systemPromptTemplate": "Aggregator role overridden by preset when councilPresetAgents=true."
+    }
+  ],
+  "topologyOptions": { "councilPresetAgents": true },
+  "timeoutMs": 480000,
+  "globalTokenLimit": 5000000
+}

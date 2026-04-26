@@ -1,0 +1,37 @@
+{
+  "goal": "Empfiehlt sich für ein neues Web-Backend Node.js, Go oder Rust? Stimme mit Begründung ab und finde Konsens.",
+  "topology": "majority-voting",
+  "coordinators": [
+    {
+      "id": "voter-node",
+      "role": "Node-Befürworter",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Loop {{loop}}/{{total_loops}}. Conversation: {{conversation_so_far}}. Argue for Node.js, write to blackboard '{{expert_output_key}}', terminate."
+    },
+    {
+      "id": "voter-go",
+      "role": "Go-Befürworter",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Loop {{loop}}/{{total_loops}}. Conversation: {{conversation_so_far}}. Argue for Go, write to blackboard '{{expert_output_key}}', terminate."
+    },
+    {
+      "id": "voter-rust",
+      "role": "Rust-Befürworter",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Loop {{loop}}/{{total_loops}}. Conversation: {{conversation_so_far}}. Argue for Rust, write to blackboard '{{expert_output_key}}', terminate."
+    },
+    {
+      "id": "consensus",
+      "role": "Consensus",
+      "model": "haiku",
+      "maxTurns": 6,
+      "systemPromptTemplate": "Consensus role overridden by preset when majorityPresetConsensus=true."
+    }
+  ],
+  "topologyOptions": { "majorityLoops": 1, "majorityPresetConsensus": true },
+  "timeoutMs": 420000,
+  "globalTokenLimit": 5000000
+}

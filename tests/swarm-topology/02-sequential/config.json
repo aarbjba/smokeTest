@@ -1,0 +1,30 @@
+{
+  "goal": "Schreibe einen 3-Satz LinkedIn-Post zu 'Warum TypeScript-Types in 2026 wichtiger sind als je'. Pipeline: Writer → Editor → Polish.",
+  "topology": "sequential",
+  "coordinators": [
+    {
+      "id": "writer",
+      "role": "Writer",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Stage {{stage}}/{{total_stages}}. Previous: {{previous_output}}. Write your output to blackboard '{{stage_output_key}}', then terminate."
+    },
+    {
+      "id": "editor",
+      "role": "Editor",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Stage {{stage}}/{{total_stages}}. Previous: {{previous_output}}. Edit/improve and write to blackboard '{{stage_output_key}}', then terminate."
+    },
+    {
+      "id": "polish",
+      "role": "Final-Polish",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Goal: {{goal}}. Stage {{stage}}/{{total_stages}}. Previous: {{previous_output}}. Polish to publication-ready and write to blackboard '{{stage_output_key}}', then terminate."
+    }
+  ],
+  "topologyOptions": { "sequentialDriftDetection": false },
+  "timeoutMs": 300000,
+  "globalTokenLimit": 5000000
+}

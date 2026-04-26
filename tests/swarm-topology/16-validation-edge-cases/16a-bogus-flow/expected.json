@@ -1,0 +1,6 @@
+{
+  "description": "agent-rearrange flow contains 'gamma' which is not a configured coordinator id.",
+  "mode": "validate-only",
+  "shouldFail": true,
+  "errorIncludes": ["unknown coordinator id", "gamma"]
+}

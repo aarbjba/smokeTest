@@ -1,0 +1,26 @@
+{
+  "goal": "Test that planner-worker with plannerWorkerLoops > 1 requires a judge coordinator.",
+  "topology": "planner-worker",
+  "coordinators": [
+    {
+      "id": "planner",
+      "role": "Planner",
+      "model": "haiku",
+      "maxTurns": 6,
+      "systemPromptTemplate": "Goal: {{goal}}. You are the planner. Publish tasks, then terminate."
+    },
+    {
+      "id": "worker-1",
+      "role": "Worker",
+      "model": "haiku",
+      "maxTurns": 8,
+      "systemPromptTemplate": "Goal: {{goal}}. You are a worker. Claim a task, do it, complete it, terminate."
+    }
+  ],
+  "topologyOptions": {
+    "plannerWorkerPresetAgents": true,
+    "plannerWorkerLoops": 3
+  },
+  "timeoutMs": 60000,
+  "globalTokenLimit": 100000
+}

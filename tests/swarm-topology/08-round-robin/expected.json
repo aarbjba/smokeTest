@@ -1,0 +1,7 @@
+{
+  "description": "2 loops × 3 agents (random shuffle); conversation grows monotonically.",
+  "status": "done",
+  "blackboardKeys": ["round_robin:conversation"],
+  "phases": ["loop_start"],
+  "phaseCounts": { "loop_start": 2 }
+}

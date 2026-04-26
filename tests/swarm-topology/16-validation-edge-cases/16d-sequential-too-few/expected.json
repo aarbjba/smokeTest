@@ -1,0 +1,6 @@
+{
+  "description": "sequential with only 1 coordinator must fail validation.",
+  "mode": "validate-only",
+  "shouldFail": true,
+  "errorIncludes": ["at least 2 coordinators"]
+}

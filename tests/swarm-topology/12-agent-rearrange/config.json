@@ -1,0 +1,41 @@
+{
+  "goal": "Schreibe einen kurzen TIL-Post zu 'TypeScript satisfies-Operator'. Recherche zuerst, dann parallel Erst-Draft + Reviewer, danach finaler Polish.",
+  "topology": "agent-rearrange",
+  "coordinators": [
+    {
+      "id": "research",
+      "role": "Researcher",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Agent-rearrange role overridden by preset when agentRearrangePresetAgents=true."
+    },
+    {
+      "id": "writer",
+      "role": "Writer",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Agent-rearrange role overridden by preset when agentRearrangePresetAgents=true."
+    },
+    {
+      "id": "reviewer",
+      "role": "Reviewer",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Agent-rearrange role overridden by preset when agentRearrangePresetAgents=true."
+    },
+    {
+      "id": "editor",
+      "role": "Editor",
+      "model": "haiku",
+      "maxTurns": 4,
+      "systemPromptTemplate": "Agent-rearrange role overridden by preset when agentRearrangePresetAgents=true."
+    }
+  ],
+  "topologyOptions": {
+    "agentRearrangeFlow": "research -> writer, reviewer -> editor",
+    "agentRearrangeLoops": 1,
+    "agentRearrangePresetAgents": true
+  },
+  "timeoutMs": 540000,
+  "globalTokenLimit": 5000000
+}
