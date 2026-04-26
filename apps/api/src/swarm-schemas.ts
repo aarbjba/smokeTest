@@ -41,7 +41,15 @@ export const CoordinatorConfigSchema = z.object({
 });
 export type CoordinatorConfig = z.infer<typeof CoordinatorConfigSchema>;
 
-export const SwarmTopology = z.enum(['concurrent', 'debate-with-judge', 'mixture-of-agents']);
+export const SwarmTopology = z.enum([
+  'concurrent',
+  'debate-with-judge',
+  'mixture-of-agents',
+  'majority-voting',
+  'sequential',
+  'hierarchical',
+  'planner-worker',
+]);
 export type SwarmTopology = z.infer<typeof SwarmTopology>;
 
 /**
@@ -50,14 +58,32 @@ export type SwarmTopology = z.infer<typeof SwarmTopology>;
  */
 export const TopologyOptionsSchema = z.object({
   // debate-with-judge
-  debateRounds:           z.number().int().min(1).max(10).default(3),
+  debateRounds:               z.number().int().min(1).max(10).default(3),
   /** When true, debate handler uses built-in Pro/Con/Judge prompts and ignores coordinators[*].systemPromptTemplate. */
-  debatePresetAgents:     z.boolean().default(false),
+  debatePresetAgents:         z.boolean().default(false),
 
   // mixture-of-agents
-  moaLayers:              z.number().int().min(1).max(10).default(3),
+  moaLayers:                  z.number().int().min(1).max(10).default(3),
   /** When true, the aggregator coordinator's systemPromptTemplate is replaced by the kyegomez AGGREGATOR_SYSTEM_PROMPT_MAIN. */
-  moaPresetAggregator:    z.boolean().default(false),
+  moaPresetAggregator:        z.boolean().default(false),
+
+  // majority-voting
+  majorityLoops:              z.number().int().min(1).max(10).default(1),
+  /** When true, the consensus coordinator's prompt is replaced by the kyegomez CONSENSUS_AGENT_PROMPT. */
+  majorityPresetConsensus:    z.boolean().default(false),
+
+  // sequential
+  /** Run a separate semantic-alignment judge after the pipeline. Requires one extra coordinator with role substring "drift" or "judge". */
+  sequentialDriftDetection:   z.boolean().default(false),
+
+  // hierarchical
+  maxDirectorLoops:           z.number().int().min(1).max(10).default(3),
+  /** When true, director / worker / evaluation prompts are replaced by built-in role prompts. */
+  hierarchicalPresetAgents:   z.boolean().default(false),
+
+  // planner-worker
+  /** When true, planner / worker / judge prompts are replaced by built-in role prompts. */
+  plannerWorkerPresetAgents:  z.boolean().default(false),
 }).partial().default({});
 export type TopologyOptions = z.infer<typeof TopologyOptionsSchema>;
 

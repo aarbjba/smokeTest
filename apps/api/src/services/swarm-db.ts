@@ -92,6 +92,24 @@ const RUN_DB_SCHEMA = `
     recorded_at   INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_tokens_agent ON tokens(agent_id);
+
+  CREATE TABLE IF NOT EXISTS swarm_tasks (
+    id          TEXT    PRIMARY KEY,
+    title       TEXT    NOT NULL,
+    description TEXT    NOT NULL,
+    priority    TEXT    NOT NULL DEFAULT 'medium'
+                CHECK(priority IN ('high','medium','low')),
+    status      TEXT    NOT NULL DEFAULT 'pending'
+                CHECK(status IN ('pending','claimed','completed','failed')),
+    depends_on  TEXT    NOT NULL DEFAULT '[]',
+    claimed_by  TEXT,
+    result      TEXT,
+    error_msg   TEXT,
+    version     INTEGER NOT NULL DEFAULT 1,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_tasks_status ON swarm_tasks(status, priority DESC);
 `;
 
 export function createRunDb(runId: string): Database.Database {

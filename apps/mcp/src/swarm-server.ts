@@ -232,6 +232,176 @@ server.tool(
   },
 );
 
+// ─── publish_tasks ──────────────────────────────────────────────────────────
+// Planner publishes the full task graph in one call. Idempotent on (id):
+// re-publishing an existing id is rejected so concurrent planners cannot
+// silently mutate the queue. Each task's depends_on is stored as JSON.
+server.tool(
+  'publish_tasks',
+  'Planner: publish the full task graph for workers to claim. Each task needs id, title, description, priority and depends_on (array of task ids).',
+  {
+    caller_id: z.string().describe('ID of the calling coordinator (the planner)'),
+    tasks: z.array(z.object({
+      id:          z.string().min(1).describe('Unique task id (short slug)'),
+      title:       z.string().min(1).describe('Short label'),
+      description: z.string().min(1).describe('Full instructions for the worker'),
+      priority:    z.enum(['high', 'medium', 'low']).default('medium'),
+      depends_on:  z.array(z.string()).default([]).describe('IDs of tasks that must complete first'),
+    })).min(1),
+  },
+  ({ caller_id, tasks }) => {
+    const ts = now();
+    const inserted: string[] = [];
+    const skipped: string[] = [];
+    const insert = db.transaction(() => {
+      const insertStmt = db.prepare(
+        'INSERT OR IGNORE INTO swarm_tasks (id, title, description, priority, status, depends_on, version, created_at, updated_at) ' +
+        "VALUES (?, ?, ?, ?, 'pending', ?, 1, ?, ?)"
+      );
+      for (const t of tasks) {
+        const res = insertStmt.run(t.id, t.title, t.description, t.priority, JSON.stringify(t.depends_on), ts, ts);
+        if (res.changes > 0) inserted.push(t.id);
+        else skipped.push(t.id);
+      }
+    });
+    insert();
+    insertEvent(caller_id, 'planner:publish_tasks', { inserted, skipped, total: tasks.length });
+    return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, inserted, skipped }) }] };
+  },
+);
+
+// ─── claim_task ─────────────────────────────────────────────────────────────
+// Atomic claim: inside a single transaction we (a) find the highest-priority
+// pending task whose depends_on are all completed, (b) flip it to 'claimed'
+// and bump its version, (c) collect the dep results so the worker has context.
+// Returns { task: null } when nothing is claimable so the worker can terminate.
+const PRIORITY_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
+
+server.tool(
+  'claim_task',
+  'Worker: atomically claim the next ready task (pending with all dependencies completed). Returns { task: null } when nothing is claimable.',
+  {
+    worker_id: z.string().describe('ID of the calling worker coordinator'),
+  },
+  ({ worker_id }) => {
+    interface TaskRow {
+      id: string; title: string; description: string; priority: string;
+      depends_on: string; version: number; created_at: number;
+    }
+    const claim = db.transaction(() => {
+      const completedRows = db.prepare(
+        "SELECT id FROM swarm_tasks WHERE status = 'completed'"
+      ).all() as { id: string }[];
+      const completed = new Set(completedRows.map(r => r.id));
+
+      const candidates = db.prepare(
+        "SELECT id, title, description, priority, depends_on, version, created_at " +
+        "FROM swarm_tasks WHERE status = 'pending'"
+      ).all() as TaskRow[];
+
+      const ready = candidates.filter(c => {
+        let deps: string[];
+        try { deps = JSON.parse(c.depends_on); } catch { deps = []; }
+        return deps.every(d => completed.has(d));
+      });
+      if (ready.length === 0) return null;
+
+      ready.sort((a, b) => {
+        const pr = (PRIORITY_RANK[b.priority] ?? 0) - (PRIORITY_RANK[a.priority] ?? 0);
+        if (pr !== 0) return pr;
+        return a.created_at - b.created_at;
+      });
+      const chosen = ready[0]!;
+
+      const ts = now();
+      const newVersion = chosen.version + 1;
+      const upd = db.prepare(
+        "UPDATE swarm_tasks SET status = 'claimed', claimed_by = ?, version = ?, updated_at = ? " +
+        "WHERE id = ? AND version = ?"
+      ).run(worker_id, newVersion, ts, chosen.id, chosen.version);
+      if (upd.changes === 0) return null; // lost the race
+
+      // Gather dep results for worker context.
+      let deps: string[];
+      try { deps = JSON.parse(chosen.depends_on); } catch { deps = []; }
+      const depResults: { id: string; title: string; result: string | null }[] = [];
+      if (deps.length > 0) {
+        const placeholders = deps.map(() => '?').join(',');
+        const depRows = db.prepare(
+          `SELECT id, title, result FROM swarm_tasks WHERE id IN (${placeholders})`
+        ).all(...deps) as { id: string; title: string; result: string | null }[];
+        depResults.push(...depRows);
+      }
+
+      return {
+        id:          chosen.id,
+        title:       chosen.title,
+        description: chosen.description,
+        priority:    chosen.priority,
+        version:     newVersion,
+        dependency_results: depResults,
+      };
+    });
+
+    const task = claim();
+    if (task) {
+      insertEvent(worker_id, 'worker:claim_task', { task_id: task.id, title: task.title });
+    }
+    return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, task }) }] };
+  },
+);
+
+// ─── complete_task ──────────────────────────────────────────────────────────
+// Optimistic-locking complete: only succeeds if status is still 'claimed' and
+// the caller is the worker that claimed it. Bumps version so a stale fail_task
+// from the original worker (if it retries after timeout) cannot overwrite.
+server.tool(
+  'complete_task',
+  'Worker: report a claimed task as completed with its result.',
+  {
+    worker_id: z.string().describe('ID of the calling worker coordinator'),
+    task_id:   z.string().describe('Task id returned by claim_task'),
+    result:    z.string().describe('Task result text'),
+  },
+  ({ worker_id, task_id, result }) => {
+    const ts = now();
+    const upd = db.prepare(
+      "UPDATE swarm_tasks SET status = 'completed', result = ?, version = version + 1, updated_at = ? " +
+      "WHERE id = ? AND status = 'claimed' AND claimed_by = ?"
+    ).run(result, ts, task_id, worker_id);
+    if (upd.changes === 0) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: false, error: 'task not claimed by this worker or already terminal' }) }] };
+    }
+    insertEvent(worker_id, 'worker:complete_task', { task_id, result_excerpt: result.slice(0, 200) });
+    return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true }) }] };
+  },
+);
+
+// ─── fail_task ──────────────────────────────────────────────────────────────
+// Marks a claimed task as failed. Does not auto-retry — the planner can re-publish
+// new tasks in a future cycle if needed. (Matches our single-cycle topology spec.)
+server.tool(
+  'fail_task',
+  'Worker: report a claimed task as failed with an error message.',
+  {
+    worker_id: z.string().describe('ID of the calling worker coordinator'),
+    task_id:   z.string().describe('Task id returned by claim_task'),
+    error_msg: z.string().describe('Why the task failed'),
+  },
+  ({ worker_id, task_id, error_msg }) => {
+    const ts = now();
+    const upd = db.prepare(
+      "UPDATE swarm_tasks SET status = 'failed', error_msg = ?, version = version + 1, updated_at = ? " +
+      "WHERE id = ? AND status = 'claimed' AND claimed_by = ?"
+    ).run(error_msg, ts, task_id, worker_id);
+    if (upd.changes === 0) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: false, error: 'task not claimed by this worker or already terminal' }) }] };
+    }
+    insertEvent(worker_id, 'worker:fail_task', { task_id, error_msg: error_msg.slice(0, 200) });
+    return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true }) }] };
+  },
+);
+
 // ─── Start ──────────────────────────────────────────────────────────────────
 const transport = new StdioServerTransport();
 await server.connect(transport);

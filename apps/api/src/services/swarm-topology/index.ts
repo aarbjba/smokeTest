@@ -13,6 +13,10 @@ import type { RunContext } from '../swarm-runtime.js';
 import { concurrentHandler } from './concurrent.js';
 import { debateWithJudgeHandler } from './debate-with-judge.js';
 import { mixtureOfAgentsHandler } from './mixture-of-agents.js';
+import { majorityVotingHandler } from './majority-voting.js';
+import { sequentialHandler } from './sequential.js';
+import { hierarchicalHandler } from './hierarchical.js';
+import { plannerWorkerHandler } from './planner-worker.js';
 
 export interface TopologyValidation {
   valid:  boolean;
@@ -31,6 +35,10 @@ const HANDLERS: Record<SwarmTopology, TopologyHandler> = {
   concurrent:          concurrentHandler,
   'debate-with-judge': debateWithJudgeHandler,
   'mixture-of-agents': mixtureOfAgentsHandler,
+  'majority-voting':   majorityVotingHandler,
+  sequential:          sequentialHandler,
+  hierarchical:        hierarchicalHandler,
+  'planner-worker':    plannerWorkerHandler,
 };
 
 export function getTopologyHandler(topology: SwarmTopology): TopologyHandler {

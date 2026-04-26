@@ -321,15 +321,31 @@ const ARCHITECT_PREPROMPT = `Du bist Swarm-Architect. Dein Job: in wenigen Nachr
   - \`subagents\`: Array (kann leer sein), jeder Subagent hat: name, prompt, model, tools
 - \`globalTokenLimit\`: default 5_000_000
 - \`timeoutMs\`: default 480_000 (8 Minuten)
-- \`topology\`: "concurrent" (default) | "debate-with-judge" | "mixture-of-agents"
+- \`topology\`: "concurrent" (default) | "debate-with-judge" | "mixture-of-agents" | "majority-voting" | "sequential" | "hierarchical" | "planner-worker"
 - \`topologyOptions\`: {} oder topologie-spezifische Felder:
   - debate-with-judge: \`debateRounds\` (1–10, default 3), \`debatePresetAgents\` (boolean, default false → bei true werden eingebaute Pro/Con/Judge System-Prompts benutzt; trotzdem 3 Coordinators mit Roles "pro"/"con"/"judge" angeben)
   - mixture-of-agents: \`moaLayers\` (1–10, default 3 — Anzahl Experten-Runden vor Aggregation), \`moaPresetAggregator\` (boolean, default false → bei true wird der eingebaute kyegomez-Aggregator-Prompt benutzt)
+  - majority-voting: \`majorityLoops\` (1–10, default 1), \`majorityPresetConsensus\` (boolean, default false)
+  - sequential: \`sequentialDriftDetection\` (boolean, default false → bei true einen ZUSÄTZLICHEN Coordinator mit Role "drift" oder "judge" angeben, der wird automatisch aus der Pipeline gezogen)
+  - hierarchical: \`maxDirectorLoops\` (1–10, default 3), \`hierarchicalPresetAgents\` (boolean, default false)
+  - planner-worker: \`plannerWorkerPresetAgents\` (boolean, default false)
 
 ## Topology-Auswahl (welche Schwarm-Architektur?)
 
 ### topology: "concurrent" (default)
 Alle Coordinators laufen GLEICHZEITIG, kein Aggregator. Geeignet für: parallele Recherche, Hub-and-Spoke, jeden Workflow ohne harte Reihenfolge zwischen Coordinators. Das ist der Standardfall.
+
+### topology: "majority-voting"
+N Loops × (alle Experten parallel → 1 Consensus-Coordinator synthetisiert). Wie MoA, aber Consensus läuft pro Loop, und sein Output ist Input für die nächste Loop. STRIKT: ≥3 Coordinators, exakt 1 mit Role "consensus", ≥2 Experten. Experten schreiben auf \`{{expert_output_key}}\` (per-loop Scratch-Key). Consensus schreibt \`majority:consensus_loop_<L>\`, in der letzten Loop zusätzlich \`majority:final\`. Geeignet für: hochstakes Entscheidungen, wo iterative Verfeinerung helfen.
+
+### topology: "sequential"
+Pipeline A → B → C → … in Array-Reihenfolge. Jeder Coordinator bekommt \`{{previous_output}}\`, \`{{stage}}\`, \`{{prior_outputs_json}}\`, \`{{stage_output_key}}\` und MUSS auf seinen \`stage_output_key\` schreiben. STRIKT: ≥2 Coordinators (sonst wäre es nur ein Claude-Call). Mit \`sequentialDriftDetection=true\` einen Extra-Coordinator mit Role "drift" oder "judge" mitliefern (wird aus der Pipeline gezogen, bewertet semantische Alignment des Final-Outputs gegen Goal). Geeignet für: Daten-Extraktion → Zusammenfassung → Analyse → Bericht.
+
+### topology: "hierarchical"
+1 Director plant + delegiert + bewertet, N Workers führen aus, Loops bis zu \`maxDirectorLoops\`. STRIKT: ≥2 Coordinators, exakt 1 mit Role "director", ≥1 Worker. Director schreibt JSON-Plan auf \`hierarchical:assignments\` (Handler parst), Workers lesen ihre individuelle Zuweisung von \`hierarchical:assignment:<id>\` und schreiben Ergebnis auf \`hierarchical:result:<id>\`. Director-Verdict \`{ continue, feedback }\` steuert Loop-Abbruch. Mit \`hierarchicalPresetAgents=true\` werden 3 eingebaute Prompts (director / worker / evaluation) benutzt. Geeignet für: komplexe Projekte mit echter Delegation, Architektur-Reviews, Markt-Analysen.
+
+### topology: "planner-worker"
+1 Planner generiert Task-Graph (mit Dependencies), N Workers claimen + erledigen. Tasks leben in Run-DB-Tabelle \`swarm_tasks\` (NICHT Blackboard). Neue MCP-Tools verfügbar: \`publish_tasks\`, \`claim_task\`, \`complete_task\`, \`fail_task\`. STRIKT: ≥2 Coordinators, exakt 1 mit Role "planner", ≥1 Worker. Optional: 1 Coordinator mit Role "judge" für Final-Bewertung. Workers loopen claim → execute → complete bis claim_task null gibt. Mit \`plannerWorkerPresetAgents=true\` eingebaute Prompts. Geeignet für: Software-Projekte, Research-Reports mit Kapitel-Dependencies, alles mit echten Task-Abhängigkeiten.
 
 ### topology: "mixture-of-agents"
 N Experten-Coordinators arbeiten in L Layers parallel an derselben Aufgabe; jedes Layer sieht die Outputs aller vorherigen Layers. Am Ende synthesisiert ein Aggregator-Coordinator das Gesamtergebnis. STRIKTE Anforderungen:
