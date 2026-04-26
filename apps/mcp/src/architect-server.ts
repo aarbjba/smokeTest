@@ -351,6 +351,120 @@ server.tool(
   },
 );
 
+// ─── generate_config ─────────────────────────────────────────────────────────
+//
+// Foolproof config generator: takes a topology + goal and returns a complete,
+// validated SwarmConfig. Uses the topology's built-in sample as the structural
+// template (correct roles, required options, valid coordinator IDs) and
+// substitutes the caller's goal, model tier, and preset-agent preference.
+// Always validates before returning so the result can be passed directly to
+// run_swarm or finalize_config.
+const PRESET_FLAG_MAP: Record<string, string> = {
+  'debate-with-judge': 'debatePresetAgents',
+  'mixture-of-agents': 'moaPresetAggregator',
+  'majority-voting':   'majorityPresetConsensus',
+  'hierarchical':      'hierarchicalPresetAgents',
+  'planner-worker':    'plannerWorkerPresetAgents',
+  'round-robin':       'roundRobinPresetAgents',
+  'council-as-judge':  'councilPresetAgents',
+  groupchat:           'groupchatPresetAgents',
+  'heavy-swarm':       'heavyPresetAgents',
+  'agent-rearrange':   'agentRearrangePresetAgents',
+  'graph-workflow':    'graphWorkflowPresetAgents',
+};
+
+server.tool(
+  'generate_config',
+  [
+    'Generate a complete, validated SwarmConfig for a given topology and goal.',
+    'Uses the topology\'s built-in sample structure so all required roles and options are correct.',
+    'Always validates before returning — pass the result directly to run_swarm.',
+    'Prefer this over building configs by hand to avoid validation errors.',
+  ].join(' '),
+  {
+    topology: z.enum([
+      'concurrent', 'debate-with-judge', 'mixture-of-agents', 'majority-voting',
+      'sequential', 'hierarchical', 'planner-worker', 'round-robin', 'council-as-judge',
+      'groupchat', 'heavy-swarm', 'agent-rearrange', 'graph-workflow',
+    ]).describe('Which swarm topology to use'),
+    goal: z.string().min(10).describe('The task or question the swarm should solve'),
+    model_tier: z.enum(['haiku', 'sonnet', 'opus']).default('haiku')
+      .describe('"haiku" is fastest/cheapest, "sonnet" for quality, "opus" for hardest tasks'),
+    use_preset_agents: z.boolean().default(true)
+      .describe('Use built-in topology-specific agent prompts — strongly recommended, produces far better results'),
+  },
+  async ({ topology, goal, model_tier, use_preset_agents }) => {
+    try {
+      // 1. Fetch the sample config for this topology from the live metadata
+      const result = await apiCall<{ topologies: Array<Record<string, unknown>> }>('/api/swarm/topology');
+      const meta = result.topologies.find((t) => t['topology'] === topology);
+      if (!meta) {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ ok: false, error: `Unknown topology: ${topology}` }) }],
+        };
+      }
+
+      // 2. Deep-clone the sample so mutations don't bleed between calls
+      const config = JSON.parse(JSON.stringify(meta['sampleConfig'])) as Record<string, unknown>;
+
+      // 3. Substitute goal
+      config['goal'] = goal;
+
+      // 4. Apply model tier to every coordinator
+      const coordinators = config['coordinators'] as Array<Record<string, unknown>>;
+      for (const c of coordinators) {
+        c['model'] = model_tier;
+      }
+
+      // 5. Apply preset-agents flag (topology-specific key name)
+      const presetFlag = PRESET_FLAG_MAP[topology];
+      if (presetFlag) {
+        const opts = (config['topologyOptions'] ?? {}) as Record<string, unknown>;
+        opts[presetFlag] = use_preset_agents;
+        config['topologyOptions'] = opts;
+      }
+
+      // 6. Validate — fail loudly if the template itself is broken
+      const validateResult = await apiCall<Record<string, unknown>>('/api/swarm/validate', {
+        method: 'POST',
+        body:   JSON.stringify({ config }),
+      });
+
+      if (validateResult['ok'] !== true) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              ok:               false,
+              error:            'Generated config failed validation — this is a bug, please report it',
+              validation_errors: validateResult['errors'],
+              generated_config: config,
+            }),
+          }],
+        };
+      }
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            ok:               true,
+            topology,
+            coordinator_count: coordinators.length,
+            config:           validateResult['config'] ?? config,
+            hint:             'Config validated. Pass directly to run_swarm or finalize_config.',
+          }),
+        }],
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ ok: false, error: message }) }],
+      };
+    }
+  },
+);
+
 // ─── Start ───────────────────────────────────────────────────────────────────
 const transport = new StdioServerTransport();
 await server.connect(transport);
