@@ -52,6 +52,7 @@ export const SwarmTopology = z.enum([
   'round-robin',
   'council-as-judge',
   'groupchat',
+  'heavy-swarm',
 ]);
 export type SwarmTopology = z.infer<typeof SwarmTopology>;
 
@@ -112,6 +113,12 @@ export const TopologyOptionsSchema = z.object({
   groupchatSpeakerStrategy:   GroupchatSpeakerStrategy.default('round-robin'),
   /** When true, every coordinator's prompt is replaced by the kyegomez group-chat collaborative prompt with @mention instructions. */
   groupchatPresetAgents:      z.boolean().default(false),
+
+  // heavy-swarm
+  /** Number of full Captain → Specialists → Synthesis cycles. Subsequent loops see the prior synthesis as context. */
+  heavyLoops:                 z.number().int().min(1).max(5).default(1),
+  /** When true, captain / specialist / synthesis prompts are replaced by built-in role prompts (specialists matched by role substring: research, analysis, alternatives, verification, with generic fallback). */
+  heavyPresetAgents:          z.boolean().default(false),
 }).partial().default({});
 export type TopologyOptions = z.infer<typeof TopologyOptionsSchema>;
 
