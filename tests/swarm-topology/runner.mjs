@@ -99,7 +99,9 @@ async function downloadBinary(path, dest) {
 async function pollUntilDone(runId, deadline) {
   while (Date.now() < deadline) {
     await sleep(POLL_INTERVAL);
-    const meta = await getJson(`/swarm/runs/${runId}`);
+    const body = await getJson(`/swarm/runs/${runId}`);
+    // API returns { run: { id, status, total_tokens, ... }, agents, tokenSummary, ... }
+    const meta = body.run ?? body;
     if (meta.status && meta.status !== 'running') return meta;
   }
   throw new Error(`run ${runId} did not finish within ${POLL_TIMEOUT/1000}s`);
